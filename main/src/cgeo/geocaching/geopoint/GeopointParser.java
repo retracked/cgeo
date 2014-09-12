@@ -66,10 +66,10 @@ class GeopointParser {
 
         final double lat = latitudeWrapper.result;
         final double lon = longitudeWrapper.result;
-        if (lat > 90 || lat < -90) {
+        if (!Geopoint.isValidLatitude(lat)) {
             throw new Geopoint.ParseException(text, LatLon.LAT);
         }
-        if (lon > 180 || lon < -180) {
+        if (!Geopoint.isValidLongitude(lon)) {
             throw new Geopoint.ParseException(text, LatLon.LON);
         }
         return new Geopoint(lat, lon);
@@ -92,7 +92,7 @@ class GeopointParser {
 
         try {
             return new ResultWrapper(Double.valueOf(replaceSpaceAfterComma), 0, text.length());
-        } catch (NumberFormatException e1) {
+        } catch (NumberFormatException ignored) {
             // fall through to advanced parsing
         }
 
@@ -126,7 +126,7 @@ class GeopointParser {
                 final int pos = (latlon == LatLon.LON ? text.lastIndexOf(textPart) : text.indexOf(textPart));
                 return new ResultWrapper(Double.parseDouble(textPart), pos, textPart.length());
             }
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException ignored) {
             // The right exception will be raised below.
         }
 

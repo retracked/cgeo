@@ -21,13 +21,13 @@ public class Waypoint implements IWaypoint {
 
     public static final String PREFIX_OWN = "OWN";
     private static final int ORDER_UNDEFINED = -2;
+    private static final Pattern PATTERN_COORDS = Pattern.compile("\\b[nNsS]\\s*\\d");
     private int id = -1;
     private String geocode = "geocode";
     private WaypointType waypointType = WaypointType.WAYPOINT;
     private String prefix = "";
     private String lookup = "";
     private String name = "";
-    private String latlon = "";
     private Geopoint coords = null;
     private String note = "";
     private int cachedOrder = ORDER_UNDEFINED;
@@ -67,9 +67,6 @@ public class Waypoint implements IWaypoint {
         if (StringUtils.isBlank(name)) {
             setName(old.name);
         }
-        if (StringUtils.isBlank(latlon) || latlon.startsWith("?")) { // there are waypoints containing "???"
-            latlon = old.latlon;
-        }
         if (coords == null) {
             coords = old.coords;
         }
@@ -89,7 +86,7 @@ public class Waypoint implements IWaypoint {
 
     public static void mergeWayPoints(final List<Waypoint> newPoints, final List<Waypoint> oldPoints, final boolean forceMerge) {
         // Build a map of new waypoints for faster subsequent lookups
-        final Map<String, Waypoint> newPrefixes = new HashMap<String, Waypoint>(newPoints.size());
+        final Map<String, Waypoint> newPrefixes = new HashMap<>(newPoints.size());
         for (final Waypoint waypoint : newPoints) {
             newPrefixes.put(waypoint.getPrefix(), waypoint);
         }
@@ -122,22 +119,26 @@ public class Waypoint implements IWaypoint {
     }
 
     private int computeOrder() {
+        // first parking, then trailhead (as start of the journey)
+        // puzzles, stages, waypoints can all be mixed
+        // at last the final and the original coordinates of the final
         switch (waypointType) {
             case PARKING:
                 return -1;
             case TRAILHEAD:
                 return 1;
-            case STAGE: // puzzles and stages with same value
-                return 2;
+            case STAGE:
             case PUZZLE:
+            case WAYPOINT:
                 return 2;
             case FINAL:
                 return 3;
-            case OWN:
+            case ORIGINAL:
                 return 4;
-            default:
-                return 0;
+            case OWN:
+                return 5;
         }
+        return 0;
     }
 
     private int order() {
@@ -151,13 +152,13 @@ public class Waypoint implements IWaypoint {
         return prefix;
     }
 
-    public void setPrefix(String prefix) {
+    public void setPrefix(final String prefix) {
         this.prefix = prefix;
         cachedOrder = ORDER_UNDEFINED;
     }
 
     public String getUrl() {
-        return "http://www.geocaching.com//seek/cache_details.aspx?wp=" + geocode;
+        return "http://www.geocaching.com/seek/cache_details.aspx?wp=" + geocode;
     }
 
     @Override
@@ -165,7 +166,7 @@ public class Waypoint implements IWaypoint {
         return id;
     }
 
-    public void setId(int id) {
+    public void setId(final int id) {
         this.id = id;
     }
 
@@ -174,7 +175,7 @@ public class Waypoint implements IWaypoint {
         return geocode;
     }
 
-    public void setGeocode(String geocode) {
+    public void setGeocode(final String geocode) {
         this.geocode = StringUtils.upperCase(geocode);
     }
 
@@ -187,7 +188,7 @@ public class Waypoint implements IWaypoint {
         return lookup;
     }
 
-    public void setLookup(String lookup) {
+    public void setLookup(final String lookup) {
         this.lookup = lookup;
     }
 
@@ -196,16 +197,8 @@ public class Waypoint implements IWaypoint {
         return name;
     }
 
-    public void setName(String name) {
+    public void setName(final String name) {
         this.name = name;
-    }
-
-    public String getLatlon() {
-        return latlon;
-    }
-
-    public void setLatlon(String latlon) {
-        this.latlon = latlon;
     }
 
     @Override
@@ -213,7 +206,7 @@ public class Waypoint implements IWaypoint {
         return coords;
     }
 
-    public void setCoords(Geopoint coords) {
+    public void setCoords(final Geopoint coords) {
         this.coords = coords;
     }
 
@@ -221,7 +214,7 @@ public class Waypoint implements IWaypoint {
         return note;
     }
 
-    public void setNote(String note) {
+    public void setNote(final String note) {
         this.note = note;
     }
 
@@ -244,7 +237,7 @@ public class Waypoint implements IWaypoint {
         return "waypoint";
     }
 
-    public void setVisited(boolean visited) {
+    public void setVisited(final boolean visited) {
         this.visited = visited;
     }
 
@@ -267,7 +260,7 @@ public class Waypoint implements IWaypoint {
     public static final Comparator<? super Waypoint> WAYPOINT_COMPARATOR = new Comparator<Waypoint>() {
 
         @Override
-        public int compare(Waypoint left, Waypoint right) {
+        public int compare(final Waypoint left, final Waypoint right) {
             return left.order() - right.order();
         }
     };
@@ -282,7 +275,7 @@ public class Waypoint implements IWaypoint {
         String gpxId = prefix;
 
         if (StringUtils.isNotBlank(geocode)) {
-            Geocache cache = DataStore.loadCache(geocode, LoadFlags.LOAD_CACHE_OR_DB);
+            final Geocache cache = DataStore.loadCache(geocode, LoadFlags.LOAD_CACHE_OR_DB);
             if (cache != null) {
                 gpxId = cache.getWaypointGpxId(prefix);
             }
@@ -298,11 +291,10 @@ public class Waypoint implements IWaypoint {
      * @return a collection of found waypoints
      */
     public static Collection<Waypoint> parseWaypointsFromNote(@NonNull final String initialNote) {
-        final List<Waypoint> waypoints = new LinkedList<Waypoint>();
-        final Pattern COORDPATTERN = Pattern.compile("\\b[nNsS]{1}\\s*\\d"); // begin of coordinates
+        final List<Waypoint> waypoints = new LinkedList<>();
 
         String note = initialNote;
-        MatcherWrapper matcher = new MatcherWrapper(COORDPATTERN, note);
+        MatcherWrapper matcher = new MatcherWrapper(PATTERN_COORDS, note);
         int count = 1;
         while (matcher.find()) {
             try {
@@ -317,12 +309,11 @@ public class Waypoint implements IWaypoint {
                     waypoints.add(waypoint);
                     count++;
                 }
-            } catch (final Geopoint.ParseException e) {
-                // ignore
+            } catch (final Geopoint.ParseException ignored) {
             }
 
             note = note.substring(matcher.start() + 1);
-            matcher = new MatcherWrapper(COORDPATTERN, note);
+            matcher = new MatcherWrapper(PATTERN_COORDS, note);
         }
         return waypoints;
     }

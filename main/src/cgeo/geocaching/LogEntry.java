@@ -14,6 +14,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
 
+/**
+ * Entry in a log book. This object should not be referenced directly from a Geocache object to reduce the memory usage
+ * of the Geocache objects.
+ * 
+ */
 public final class LogEntry {
 
     private static final Pattern PATTERN_REMOVE_COLORS = Pattern.compile("</?font.*?>", Pattern.CASE_INSENSITIVE);
@@ -63,7 +68,7 @@ public final class LogEntry {
 
     public void addLogImage(final Image image) {
         if (logImages == null) {
-            logImages = new ArrayList<Image>();
+            logImages = new ArrayList<>();
         }
         logImages.add(image);
     }
@@ -83,7 +88,7 @@ public final class LogEntry {
     }
 
     public CharSequence getImageTitles() {
-        final List<String> titles = new ArrayList<String>(5);
+        final List<String> titles = new ArrayList<>(5);
         for (Image image : getLogImages()) {
             if (StringUtils.isNotBlank(image.getTitle())) {
                 titles.add(HtmlUtils.extractText(image.getTitle()));

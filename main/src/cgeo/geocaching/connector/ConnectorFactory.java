@@ -13,7 +13,6 @@ import cgeo.geocaching.connector.capability.ISearchByViewPort;
 import cgeo.geocaching.connector.ec.ECConnector;
 import cgeo.geocaching.connector.gc.GCConnector;
 import cgeo.geocaching.connector.gc.MapTokens;
-import cgeo.geocaching.connector.oc.OCApiConnector;
 import cgeo.geocaching.connector.oc.OCApiConnector.ApiSupport;
 import cgeo.geocaching.connector.oc.OCApiLiveConnector;
 import cgeo.geocaching.connector.oc.OCConnector;
@@ -28,10 +27,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.Nullable;
 
-import rx.Observable;
-import rx.schedulers.Schedulers;
 import rx.functions.Func1;
-import rx.functions.Func2;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -48,16 +44,25 @@ public final class ConnectorFactory {
                     R.string.oc_de_okapi_consumer_key, R.string.oc_de_okapi_consumer_secret,
                     R.string.pref_connectorOCActive, R.string.pref_ocde_tokenpublic, R.string.pref_ocde_tokensecret, ApiSupport.current),
             new OCConnector("OpenCaching.CZ", "www.opencaching.cz", "OZ"),
-            new OCApiConnector("OpenCaching.CO.UK", "www.opencaching.org.uk", "OK", "arU4okouc4GEjMniE2fq", "CC BY-NC-SA 2.5", ApiSupport.oldapi),
+            new OCApiLiveConnector("opencaching.org.uk", "www.opencaching.org.uk", "OK", "CC BY-NC-SA 2.5",
+                    R.string.oc_uk_okapi_consumer_key, R.string.oc_uk_okapi_consumer_secret,
+                    R.string.pref_connectorOCUKActive, R.string.pref_ocuk_tokenpublic, R.string.pref_ocuk_tokensecret, ApiSupport.oldapi),
             new OCConnector("OpenCaching.ES", "www.opencachingspain.es", "OC"),
             new OCConnector("OpenCaching.IT", "www.opencaching.it", "OC"),
             new OCConnector("OpenCaching.JP", "www.opencaching.jp", "OJ"),
             new OCConnector("OpenCaching.NO/SE", "www.opencaching.se", "OS"),
-            new OCApiConnector("OpenCaching.NL", "www.opencaching.nl", "OB", "PdzU8jzIlcfMADXaYN8j", "CC BY-SA 3.0", ApiSupport.current),
+            new OCApiLiveConnector("opencaching.nl", "www.opencaching.nl", "OB", "CC BY-SA 3.0",
+                    R.string.oc_nl_okapi_consumer_key, R.string.oc_nl_okapi_consumer_secret,
+                    R.string.pref_connectorOCNLActive, R.string.pref_ocnl_tokenpublic, R.string.pref_ocnl_tokensecret, ApiSupport.current),
             new OCApiLiveConnector("opencaching.pl", "www.opencaching.pl", "OP", "CC BY-SA 3.0",
                     R.string.oc_pl_okapi_consumer_key, R.string.oc_pl_okapi_consumer_secret,
                     R.string.pref_connectorOCPLActive, R.string.pref_ocpl_tokenpublic, R.string.pref_ocpl_tokensecret, ApiSupport.current),
-            new OCApiConnector("OpenCaching.US", "www.opencaching.us", "OU", "pTsYAYSXFcfcRQnYE6uA", "CC BY-NC-SA 2.5", ApiSupport.current),
+            new OCApiLiveConnector("opencaching.us", "www.opencaching.us", "OU", "CC BY-NC-SA 2.5",
+                    R.string.oc_us_okapi_consumer_key, R.string.oc_us_okapi_consumer_secret,
+                    R.string.pref_connectorOCUSActive, R.string.pref_ocus_tokenpublic, R.string.pref_ocus_tokensecret, ApiSupport.current),
+            new OCApiLiveConnector("opencaching.ro", "www.opencaching.ro", "OR", "CC BY-SA 3.0",
+                    R.string.oc_ro_okapi_consumer_key, R.string.oc_ro_okapi_consumer_secret,
+                    R.string.pref_connectorOCROActive, R.string.pref_ocro_tokenpublic, R.string.pref_ocro_tokensecret, ApiSupport.current),
             new OXConnector(),
             new GeocachingAustraliaConnector(),
             new GeopeitusConnector(),
@@ -84,7 +89,7 @@ public final class ConnectorFactory {
 
     @SuppressWarnings("unchecked")
     private static <T extends IConnector> Collection<T> getMatchingConnectors(final Class<T> clazz) {
-        final List<T> matching = new ArrayList<T>();
+        final List<T> matching = new ArrayList<>();
         for (final IConnector connector : CONNECTORS) {
             if (clazz.isInstance(connector)) {
                 matching.add((T) connector);
@@ -114,7 +119,7 @@ public final class ConnectorFactory {
     }
 
     public static ILogin[] getActiveLiveConnectors() {
-        final List<ILogin> liveConns = new ArrayList<ILogin>();
+        final List<ILogin> liveConns = new ArrayList<>();
         for (final IConnector conn : CONNECTORS) {
             if (conn instanceof ILogin && conn.isActive()) {
                 liveConns.add((ILogin) conn);
@@ -139,16 +144,16 @@ public final class ConnectorFactory {
     }
 
     public static @NonNull
-    IConnector getConnector(ICache cache) {
+    IConnector getConnector(final ICache cache) {
         return getConnector(cache.getGeocode());
     }
 
-    public static TrackableConnector getConnector(Trackable trackable) {
+    public static TrackableConnector getConnector(final Trackable trackable) {
         return getTrackableConnector(trackable.getGeocode());
     }
 
     @NonNull
-    public static TrackableConnector getTrackableConnector(String geocode) {
+    public static TrackableConnector getTrackableConnector(final String geocode) {
         for (final TrackableConnector connector : TRACKABLE_CONNECTORS) {
             if (connector.canHandleTrackable(geocode)) {
                 return connector;
@@ -181,28 +186,11 @@ public final class ConnectorFactory {
     }
 
     /** @see ISearchByViewPort#searchByViewport */
-    public static Observable<SearchResult> searchByViewport(final @NonNull Viewport viewport, final MapTokens tokens) {
-        return Observable.from(searchByViewPortConns).filter(new Func1<ISearchByViewPort, Boolean>() {
+    public static SearchResult searchByViewport(final @NonNull Viewport viewport, final MapTokens tokens) {
+        return SearchResult.parallelCombineActive(searchByViewPortConns, new Func1<ISearchByViewPort, SearchResult>() {
             @Override
-            public Boolean call(final ISearchByViewPort connector) {
-                return connector.isActive();
-            }
-        }).parallel(new Func1<Observable<ISearchByViewPort>, Observable<SearchResult>>() {
-            @Override
-            public Observable<SearchResult> call(final Observable<ISearchByViewPort> connector) {
-                return connector.map(new Func1<ISearchByViewPort, SearchResult>() {
-                    @Override
-                    public SearchResult call(final ISearchByViewPort connector) {
-                        return connector.searchByViewport(viewport, tokens);
-                    }
-                });
-            }
-        }, Schedulers.io()).reduce(new SearchResult(), new Func2<SearchResult, SearchResult, SearchResult>() {
-
-            @Override
-            public SearchResult call(final SearchResult result, final SearchResult searchResult) {
-                result.addSearchResult(searchResult);
-                return result;
+            public SearchResult call(final ISearchByViewPort connector) {
+                return connector.searchByViewport(viewport, tokens);
             }
         });
     }

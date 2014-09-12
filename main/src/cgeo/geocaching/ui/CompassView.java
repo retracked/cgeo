@@ -3,20 +3,22 @@ package cgeo.geocaching.ui;
 import cgeo.geocaching.R;
 import cgeo.geocaching.utils.AngleUtils;
 
+import rx.Subscription;
+import rx.android.schedulers.AndroidSchedulers;
+import rx.functions.Action0;
+import rx.subscriptions.Subscriptions;
+
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PaintFlagsDrawFilter;
 import android.util.AttributeSet;
-import android.util.FloatMath;
 import android.view.View;
-import rx.Scheduler;
-import rx.Subscription;
-import rx.functions.Action1;
-import rx.schedulers.Schedulers;
 
+import java.lang.ref.WeakReference;
 import java.util.concurrent.TimeUnit;
 
 public class CompassView extends View {
@@ -53,24 +55,55 @@ public class CompassView extends View {
     private int compassOverlayWidth = 0;
     private int compassOverlayHeight = 0;
     private boolean initialDisplay;
-    private Subscription periodicUpdate;
+    private Subscription periodicUpdate = Subscriptions.empty();
 
-    public CompassView(Context contextIn) {
+    private static final class UpdateAction implements Action0 {
+
+        private final WeakReference<CompassView> compassViewRef;
+
+        private UpdateAction(final CompassView view) {
+            this.compassViewRef = new WeakReference<>(view);
+        }
+
+        @Override
+        public void call() {
+            final CompassView compassView = compassViewRef.get();
+            if (compassView == null) {
+                return;
+            }
+            compassView.updateGraphics();
+        }
+    }
+
+    public CompassView(final Context contextIn) {
         super(contextIn);
         context = contextIn;
     }
 
-    public CompassView(Context contextIn, AttributeSet attrs) {
+    public void updateGraphics() {
+        final float newAzimuthShown = initialDisplay ? northMeasured : smoothUpdate(northMeasured, azimuthShown);
+        final float newCacheHeadingShown = initialDisplay ? cacheHeadingMeasured : smoothUpdate(cacheHeadingMeasured, cacheHeadingShown);
+        initialDisplay = false;
+        if (Math.abs(AngleUtils.difference(azimuthShown, newAzimuthShown)) >= 2 ||
+                Math.abs(AngleUtils.difference(cacheHeadingShown, newCacheHeadingShown)) >= 2) {
+            azimuthShown = newAzimuthShown;
+            cacheHeadingShown = newCacheHeadingShown;
+            invalidate();
+        }
+    }
+
+    public CompassView(final Context contextIn, final AttributeSet attrs) {
         super(contextIn, attrs);
         context = contextIn;
     }
 
     @Override
     public void onAttachedToWindow() {
-        compassUnderlay = BitmapFactory.decodeResource(context.getResources(), R.drawable.compass_underlay);
-        compassRose = BitmapFactory.decodeResource(context.getResources(), R.drawable.compass_rose);
-        compassArrow = BitmapFactory.decodeResource(context.getResources(), R.drawable.compass_arrow);
-        compassOverlay = BitmapFactory.decodeResource(context.getResources(), R.drawable.compass_overlay);
+        final Resources res = context.getResources();
+        compassUnderlay = BitmapFactory.decodeResource(res, R.drawable.compass_underlay);
+        compassRose = BitmapFactory.decodeResource(res, R.drawable.compass_rose);
+        compassArrow = BitmapFactory.decodeResource(res, R.drawable.compass_arrow);
+        compassOverlay = BitmapFactory.decodeResource(res, R.drawable.compass_overlay);
 
         compassUnderlayWidth = compassUnderlay.getWidth();
         compassUnderlayHeight = compassUnderlay.getWidth();
@@ -84,29 +117,15 @@ public class CompassView extends View {
         setfil = new PaintFlagsDrawFilter(0, Paint.FILTER_BITMAP_FLAG);
         remfil = new PaintFlagsDrawFilter(Paint.FILTER_BITMAP_FLAG, 0);
 
-        synchronized (this) {
-            initialDisplay = true;
-        }
-        periodicUpdate = Schedulers.io().schedulePeriodically(new Action1<Scheduler.Inner>() {
-            @Override
-            public void call(final Scheduler.Inner inner) {
-                synchronized (CompassView.this) {
-                    final float newAzimuthShown = smoothUpdate(northMeasured, azimuthShown);
-                    final float newCacheHeadingShown = smoothUpdate(cacheHeadingMeasured, cacheHeadingShown);
-                    if (Math.abs(AngleUtils.difference(azimuthShown, newAzimuthShown)) >= 2 ||
-                            Math.abs(AngleUtils.difference(cacheHeadingShown, newCacheHeadingShown)) >= 2) {
-                        azimuthShown = newAzimuthShown;
-                        cacheHeadingShown = newCacheHeadingShown;
-                        postInvalidate();
-                    }
-                }
-            }
-        }, 0, 40, TimeUnit.MILLISECONDS);
+        initialDisplay = true;
+
+        periodicUpdate = AndroidSchedulers.mainThread().createWorker().schedulePeriodically(new UpdateAction(this), 0, 40, TimeUnit.MILLISECONDS);
     }
 
     @Override
     public void onDetachedFromWindow() {
         periodicUpdate.unsubscribe();
+
         super.onDetachedFromWindow();
 
         if (compassUnderlay != null) {
@@ -126,20 +145,15 @@ public class CompassView extends View {
         }
     }
 
-    public synchronized void updateNorth(float northHeadingIn, float cacheHeadingIn) {
-        if (initialDisplay) {
-            // We will force the compass to move brutally if this is the first
-            // update since it is visible.
-            azimuthShown = northHeadingIn;
-            cacheHeadingShown = cacheHeadingIn;
-
-            // it may take some time to get an initial direction measurement for the device
-            if (northHeadingIn != 0.0) {
-                initialDisplay = false;
-            }
-        }
-        northMeasured = northHeadingIn;
-        cacheHeadingMeasured = cacheHeadingIn;
+    /**
+     * Update north and cache headings. This method may only be called on the UI thread.
+     *
+     * @param northHeading the north direction (rotation of the rose)
+     * @param cacheHeading the cache direction (extra rotation of the needle)
+     */
+    public void updateNorth(final float northHeading, final float cacheHeading) {
+        northMeasured = northHeading;
+        cacheHeadingMeasured = cacheHeading;
     }
 
     /**
@@ -151,35 +165,27 @@ public class CompassView extends View {
      *            the actual value
      * @return the new value
      */
-    static protected float smoothUpdate(float goal, float actual) {
-        final float diff = AngleUtils.difference(actual, goal);
+    static protected float smoothUpdate(final float goal, final float actual) {
+        final double diff = AngleUtils.difference(actual, goal);
 
-        float offset = 0;
+        double offset = 0;
 
         // If the difference is smaller than 1 degree, do nothing as it
         // causes the arrow to vibrate. Round away from 0.
         if (diff > 1.0) {
-            offset = FloatMath.ceil(diff / 10.0f); // for larger angles, rotate faster
+            offset = Math.ceil(diff / 10.0); // for larger angles, rotate faster
         } else if (diff < 1.0) {
-            offset = FloatMath.floor(diff / 10.0f);
+            offset = Math.floor(diff / 10.0);
         }
 
-        return AngleUtils.normalize(actual + offset);
+        return AngleUtils.normalize((float) (actual + offset));
     }
 
     @Override
-    protected void onDraw(Canvas canvas) {
-        // use local synchronized variables to avoid them being changed from the device during drawing
-        float azimuthDrawn;
-        float headingDrawn;
+    protected void onDraw(final Canvas canvas) {
 
-        synchronized (this) {
-            azimuthDrawn = azimuthShown;
-            headingDrawn = cacheHeadingShown;
-        }
-
-        final float azimuthTemp = azimuthDrawn;
-        final float azimuthRelative = AngleUtils.normalize(azimuthTemp - headingDrawn);
+        final float azimuthTemp = azimuthShown;
+        final float azimuthRelative = AngleUtils.normalize(azimuthTemp - cacheHeadingShown);
 
         // compass margins
         final int canvasCenterX = (compassRoseWidth / 2) + ((getWidth() - compassRoseWidth) / 2);
@@ -198,16 +204,18 @@ public class CompassView extends View {
         marginLeftTemp = (getWidth() - compassRoseWidth) / 2;
         marginTopTemp = (getHeight() - compassRoseHeight) / 2;
 
+        canvas.save();
         canvas.rotate(-azimuthTemp, canvasCenterX, canvasCenterY);
         canvas.drawBitmap(compassRose, marginLeftTemp, marginTopTemp, null);
-        canvas.rotate(azimuthTemp, canvasCenterX, canvasCenterY);
+        canvas.restore();
 
         marginLeftTemp = (getWidth() - compassArrowWidth) / 2;
         marginTopTemp = (getHeight() - compassArrowHeight) / 2;
 
+        canvas.save();
         canvas.rotate(-azimuthRelative, canvasCenterX, canvasCenterY);
         canvas.drawBitmap(compassArrow, marginLeftTemp, marginTopTemp, null);
-        canvas.rotate(azimuthRelative, canvasCenterX, canvasCenterY);
+        canvas.restore();
 
         marginLeftTemp = (getWidth() - compassOverlayWidth) / 2;
         marginTopTemp = (getHeight() - compassOverlayHeight) / 2;
@@ -219,11 +227,11 @@ public class CompassView extends View {
     }
 
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    protected void onMeasure(final int widthMeasureSpec, final int heightMeasureSpec) {
         setMeasuredDimension(measureWidth(widthMeasureSpec), measureHeight(heightMeasureSpec));
     }
 
-    private int measureWidth(int measureSpec) {
+    private int measureWidth(final int measureSpec) {
         final int specMode = MeasureSpec.getMode(measureSpec);
         final int specSize = MeasureSpec.getSize(measureSpec);
 
@@ -239,7 +247,7 @@ public class CompassView extends View {
         return desired;
     }
 
-    private int measureHeight(int measureSpec) {
+    private int measureHeight(final int measureSpec) {
         // The duplicated code in measureHeight and measureWidth cannot be avoided.
         // Those methods must be efficient, therefore we cannot extract the code differences and unify the remainder.
         final int specMode = MeasureSpec.getMode(measureSpec);

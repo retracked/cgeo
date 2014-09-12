@@ -4,6 +4,9 @@ import cgeo.geocaching.Geocache;
 import cgeo.geocaching.utils.CancellableHandler;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.CharEncoding;
+import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.jdt.annotation.Nullable;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
@@ -29,7 +32,7 @@ public abstract class FileParser {
      * @throws ParserException
      *             if the input stream contains data not matching the file format of the parser
      */
-    public abstract Collection<Geocache> parse(final InputStream stream, final CancellableHandler progressHandler) throws IOException, ParserException;
+    public abstract Collection<Geocache> parse(@NonNull final InputStream stream, @Nullable final CancellableHandler progressHandler) throws IOException, ParserException;
 
     /**
      * Convenience method for parsing a file.
@@ -41,7 +44,7 @@ public abstract class FileParser {
      * @throws ParserException
      */
     public Collection<Geocache> parse(final File file, final CancellableHandler progressHandler) throws IOException, ParserException {
-        BufferedInputStream stream = new BufferedInputStream(new FileInputStream(file));
+        final BufferedInputStream stream = new BufferedInputStream(new FileInputStream(file));
         try {
             return parse(stream, progressHandler);
         } finally {
@@ -49,10 +52,10 @@ public abstract class FileParser {
         }
     }
 
-    protected static StringBuilder readStream(InputStream is, CancellableHandler progressHandler) throws IOException {
+    protected static StringBuilder readStream(@NonNull final InputStream is, @Nullable final CancellableHandler progressHandler) throws IOException {
         final StringBuilder buffer = new StringBuilder();
-        ProgressInputStream progressInputStream = new ProgressInputStream(is);
-        final BufferedReader input = new BufferedReader(new InputStreamReader(progressInputStream, "UTF-8"));
+        final ProgressInputStream progressInputStream = new ProgressInputStream(is);
+        final BufferedReader input = new BufferedReader(new InputStreamReader(progressInputStream, CharEncoding.UTF_8));
 
         try {
             String line;
@@ -66,7 +69,7 @@ public abstract class FileParser {
         }
     }
 
-    protected static void showProgressMessage(final CancellableHandler handler, final int bytesRead) {
+    protected static void showProgressMessage(@Nullable final CancellableHandler handler, final int bytesRead) {
         if (handler != null) {
             if (handler.isCancelled()) {
                 throw new CancellationException();
@@ -75,7 +78,7 @@ public abstract class FileParser {
         }
     }
 
-    protected static void fixCache(Geocache cache) {
+    protected static void fixCache(final Geocache cache) {
         if (cache.getInventory() != null) {
             cache.setInventoryItems(cache.getInventory().size());
         } else {

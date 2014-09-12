@@ -15,6 +15,7 @@ import cgeo.geocaching.settings.Settings;
 import cgeo.geocaching.utils.Log;
 
 import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jdt.annotation.NonNull;
 import org.mapsforge.android.maps.MapView;
 import org.mapsforge.android.maps.Projection;
 import org.mapsforge.android.maps.mapgenerator.MapGenerator;
@@ -23,7 +24,6 @@ import org.mapsforge.android.maps.mapgenerator.MapGeneratorInternal;
 import org.mapsforge.android.maps.overlay.Overlay;
 import org.mapsforge.core.GeoPoint;
 
-import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
@@ -42,6 +42,13 @@ public class MapsforgeMapView extends MapView implements MapViewImpl {
 
     public MapsforgeMapView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        initialize(context);
+    }
+
+    private void initialize(Context context) {
+        if (isInEditMode()) {
+            return;
+        }
         gestureDetector = new GestureDetector(context, new GestureListener());
         if (Settings.isScaleMapsforgeText()) {
             this.setTextScale(getResources().getDisplayMetrics().density);
@@ -49,7 +56,7 @@ public class MapsforgeMapView extends MapView implements MapViewImpl {
     }
 
     @Override
-    public void draw(Canvas canvas) {
+    public void draw(@NonNull Canvas canvas) {
         try {
             // Google Maps and OSM Maps use different zoom levels for the same view.
             // Here we don't want the Google Maps compatible zoom level, but the actual one.
@@ -74,6 +81,7 @@ public class MapsforgeMapView extends MapView implements MapViewImpl {
     }
 
     @Override
+    @NonNull
     public GeoPointImpl getMapViewCenter() {
         GeoPoint point = getMapPosition().getMapCenter();
         return new MapsforgeGeoPoint(point.latitudeE6, point.longitudeE6);
@@ -103,8 +111,8 @@ public class MapsforgeMapView extends MapView implements MapViewImpl {
     }
 
     @Override
-    public PositionAndScaleOverlay createAddPositionAndScaleOverlay(Activity activity) {
-        MapsforgeOverlay ovl = new MapsforgeOverlay(activity);
+    public PositionAndScaleOverlay createAddPositionAndScaleOverlay() {
+        MapsforgeOverlay ovl = new MapsforgeOverlay();
         getOverlays().add(ovl);
         return (PositionAndScaleOverlay) ovl.getBase();
     }
@@ -226,7 +234,7 @@ public class MapsforgeMapView extends MapView implements MapViewImpl {
         if (StringUtils.isNotEmpty(customRenderTheme)) {
             try {
                 setRenderTheme(new File(customRenderTheme));
-            } catch (FileNotFoundException e) {
+            } catch (FileNotFoundException ignored) {
                 Toast.makeText(
                         getContext(),
                         getContext().getResources().getString(R.string.warn_rendertheme_missing),

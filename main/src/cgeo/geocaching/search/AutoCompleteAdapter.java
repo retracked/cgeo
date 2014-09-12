@@ -15,10 +15,11 @@ import android.widget.Filter;
  */
 public class AutoCompleteAdapter extends ArrayAdapter<String> {
 
-    private String[] suggestions;
+    private final static String[] EMPTY = new String[0];
+    private String[] suggestions = EMPTY;
     private final Func1<String, String[]> suggestionFunction;
 
-    public AutoCompleteAdapter(Context context, int textViewResourceId, final Func1<String, String[]> suggestionFunction) {
+    public AutoCompleteAdapter(final Context context, final int textViewResourceId, final Func1<String, String[]> suggestionFunction) {
         super(context, textViewResourceId);
         this.suggestionFunction = suggestionFunction;
     }
@@ -29,23 +30,23 @@ public class AutoCompleteAdapter extends ArrayAdapter<String> {
     }
 
     @Override
-    public String getItem(int index) {
+    public String getItem(final int index) {
         return suggestions[index];
     }
 
     @Override
     public Filter getFilter() {
-        Filter filter = new Filter() {
+        return new Filter() {
 
             @Override
-            protected FilterResults performFiltering(CharSequence constraint) {
-                FilterResults filterResults = new FilterResults();
+            protected FilterResults performFiltering(final CharSequence constraint) {
+                final FilterResults filterResults = new FilterResults();
                 if (constraint == null) {
                     return filterResults;
                 }
-                String trimmed = StringUtils.trim(constraint.toString());
+                final String trimmed = StringUtils.trim(constraint.toString());
                 if (StringUtils.length(trimmed) >= 2) {
-                    String[] newResults = suggestionFunction.call(trimmed);
+                    final String[] newResults = suggestionFunction.call(trimmed);
 
                     // Assign the data to the FilterResults, but do not yet store in the global member.
                     // Otherwise we might invalidate the adapter and cause an IllegalStateException.
@@ -56,7 +57,7 @@ public class AutoCompleteAdapter extends ArrayAdapter<String> {
             }
 
             @Override
-            protected void publishResults(CharSequence constraint, FilterResults filterResults) {
+            protected void publishResults(final CharSequence constraint, final FilterResults filterResults) {
                 if (filterResults != null && filterResults.count > 0) {
                     suggestions = (String[]) filterResults.values;
                     notifyDataSetChanged();
@@ -66,6 +67,5 @@ public class AutoCompleteAdapter extends ArrayAdapter<String> {
                 }
             }
         };
-        return filter;
     }
 }

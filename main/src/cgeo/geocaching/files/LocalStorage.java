@@ -7,8 +7,11 @@ import cgeo.geocaching.utils.Log;
 
 import ch.boye.httpclientandroidlib.Header;
 import ch.boye.httpclientandroidlib.HttpResponse;
+
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.CharEncoding;
 import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.Nullable;
 
 import android.os.Environment;
@@ -68,7 +71,7 @@ public final class LocalStorage {
         return getStorageSpecific(true);
     }
 
-    private static File getStorageSpecific(boolean secondary) {
+    private static File getStorageSpecific(final boolean secondary) {
         return Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED) ^ secondary ?
                 getExternalStorageBase() :
                 new File(getInternalStorageBase(), LocalStorage.cache);
@@ -201,7 +204,7 @@ public final class LocalStorage {
             saveHeader(HEADER_ETAG, saved ? response : null, targetFile);
             saveHeader(HEADER_LAST_MODIFIED, saved ? response : null, targetFile);
             return saved;
-        } catch (IOException e) {
+        } catch (final IOException e) {
             Log.e("LocalStorage.saveEntityToFile", e);
         }
 
@@ -241,7 +244,7 @@ public final class LocalStorage {
     public static String getSavedHeader(final File baseFile, final String name) {
         try {
             final File file = filenameForHeader(baseFile, name);
-            final Reader f = new InputStreamReader(new FileInputStream(file), "UTF-8");
+            final Reader f = new InputStreamReader(new FileInputStream(file), CharEncoding.UTF_8);
             try {
                 // No header will be more than 256 bytes
                 final char[] value = new char[256];
@@ -250,7 +253,7 @@ public final class LocalStorage {
             } finally {
                 f.close();
             }
-        } catch (final FileNotFoundException e) {
+        } catch (final FileNotFoundException ignored) {
             // Do nothing, the file does not exist
         } catch (final Exception e) {
             Log.w("could not read saved header " + name + " for " + baseFile, e);
@@ -290,7 +293,7 @@ public final class LocalStorage {
             } finally {
                 IOUtils.closeQuietly(inputStream);
             }
-        } catch (IOException e) {
+        } catch (final IOException e) {
             Log.e("LocalStorage.saveToFile", e);
             FileUtils.deleteIgnoringFailure(targetFile);
         }
@@ -320,10 +323,10 @@ public final class LocalStorage {
             // close here already to catch any issue with closing
             input.close();
             output.close();
-        } catch (FileNotFoundException e) {
+        } catch (final FileNotFoundException e) {
             Log.e("LocalStorage.copy: could not copy file", e);
             return false;
-        } catch (IOException e) {
+        } catch (final IOException e) {
             Log.e("LocalStorage.copy: could not copy file", e);
             return false;
         } finally {
@@ -344,7 +347,7 @@ public final class LocalStorage {
             }
             // Flushing is only necessary if the stream is not immediately closed afterwards.
             // We rely on all callers to do that correctly outside of this method
-        } catch (IOException e) {
+        } catch (final IOException e) {
             Log.e("LocalStorage.copy: error when copying data", e);
             return false;
         }
@@ -361,9 +364,13 @@ public final class LocalStorage {
         return Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED);
     }
 
-    public static boolean deleteDirectory(File path) {
-        if (path.exists()) {
-            for (final File file : path.listFiles()) {
+    public static boolean deleteDirectory(@NonNull final File dir) {
+        final File[] files = dir.listFiles();
+
+        // Although we are called on an existing directory, it might have been removed concurrently
+        // in the meantime, for example by the user or by another cleanup task.
+        if (files != null) {
+            for (final File file : files) {
                 if (file.isDirectory()) {
                     deleteDirectory(file);
                 } else {
@@ -372,7 +379,7 @@ public final class LocalStorage {
             }
         }
 
-        return FileUtils.delete(path);
+        return FileUtils.delete(dir);
     }
 
     /**
@@ -393,7 +400,7 @@ public final class LocalStorage {
                 if (!FileUtils.delete(file)) {
                     Log.w("LocalStorage.deleteFilesPrefix: Can't delete file " + file.getName());
                 }
-            } catch (Exception e) {
+            } catch (final Exception e) {
                 Log.e("LocalStorage.deleteFilesPrefix", e);
             }
         }
@@ -412,7 +419,7 @@ public final class LocalStorage {
     public static File[] getFilesWithPrefix(final String geocode, final String filenamePrefix) {
         final FilenameFilter filter = new FilenameFilter() {
             @Override
-            public boolean accept(File dir, String filename) {
+            public boolean accept(final File dir, final String filename) {
                 return filename.startsWith(filenamePrefix);
             }
         };
@@ -425,24 +432,24 @@ public final class LocalStorage {
      */
     public static List<File> getStorages() {
 
-        String extStorage = Environment.getExternalStorageDirectory().getAbsolutePath();
-        List<File> storages = new ArrayList<File>();
+        final String extStorage = Environment.getExternalStorageDirectory().getAbsolutePath();
+        final List<File> storages = new ArrayList<>();
         storages.add(new File(extStorage));
-        File file = new File(FILE_SYSTEM_TABLE_PATH);
+        final File file = new File(FILE_SYSTEM_TABLE_PATH);
         if (file.canRead()) {
             Reader fr = null;
             BufferedReader br = null;
             try {
-                fr = new InputStreamReader(new FileInputStream(file), "UTF-8");
+                fr = new InputStreamReader(new FileInputStream(file), CharEncoding.UTF_8);
                 br = new BufferedReader(fr);
                 String s = br.readLine();
                 while (s != null) {
                     if (s.startsWith("dev_mount")) {
-                        String[] tokens = StringUtils.split(s);
+                        final String[] tokens = StringUtils.split(s);
                         if (tokens.length >= 3) {
-                            String path = tokens[2]; // mountpoint
+                            final String path = tokens[2]; // mountpoint
                             if (!extStorage.equals(path)) {
-                                File directory = new File(path);
+                                final File directory = new File(path);
                                 if (directory.exists() && directory.isDirectory()) {
                                     storages.add(directory);
                                 }
@@ -451,9 +458,9 @@ public final class LocalStorage {
                     }
                     s = br.readLine();
                 }
-            } catch (IOException e) {
+            } catch (final IOException e) {
                 Log.e("Could not get additional mount points for user content. " +
-                        "Proceeding with external storage only (" + extStorage + ")");
+                        "Proceeding with external storage only (" + extStorage + ")", e);
             } finally {
                 IOUtils.closeQuietly(fr);
                 IOUtils.closeQuietly(br);

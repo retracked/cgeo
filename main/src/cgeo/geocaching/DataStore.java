@@ -16,6 +16,7 @@ import cgeo.geocaching.geopoint.Viewport;
 import cgeo.geocaching.list.AbstractList;
 import cgeo.geocaching.list.PseudoList;
 import cgeo.geocaching.list.StoredList;
+import cgeo.geocaching.search.SearchSuggestionCursor;
 import cgeo.geocaching.settings.Settings;
 import cgeo.geocaching.ui.dialog.Dialogs;
 import cgeo.geocaching.utils.FileUtils;
@@ -23,8 +24,10 @@ import cgeo.geocaching.utils.Log;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jdt.annotation.NonNull;
+
 import rx.android.observables.AndroidObservable;
 import rx.functions.Action1;
 import rx.functions.Func0;
@@ -34,7 +37,6 @@ import rx.util.async.Async;
 
 import android.app.Activity;
 import android.app.ProgressDialog;
-import android.app.SearchManager;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.ContextWrapper;
@@ -47,7 +49,6 @@ import android.database.sqlite.SQLiteDatabase.CursorFactory;
 import android.database.sqlite.SQLiteDoneException;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteStatement;
-import android.provider.BaseColumns;
 
 import java.io.File;
 import java.io.FilenameFilter;
@@ -55,7 +56,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -109,35 +112,32 @@ public class DataStore {
                     "cg_caches.direction,"          +    // 16
                     "cg_caches.distance,"           +    // 17
                     "cg_caches.terrain,"            +    // 18
-                    "cg_caches.latlon,"             +    // 19
-                    "cg_caches.location,"           +    // 20
-                    "cg_caches.personal_note,"      +    // 21
-                    "cg_caches.shortdesc,"          +    // 22
-                    "cg_caches.favourite_cnt,"      +    // 23
-                    "cg_caches.rating,"             +    // 24
-                    "cg_caches.votes,"              +    // 25
-                    "cg_caches.myvote,"             +    // 26
-                    "cg_caches.disabled,"           +    // 27
-                    "cg_caches.archived,"           +    // 28
-                    "cg_caches.members,"            +    // 29
-                    "cg_caches.found,"              +    // 30
-                    "cg_caches.favourite,"          +    // 31
-                    "cg_caches.inventoryunknown,"   +    // 32
-                    "cg_caches.onWatchlist,"        +    // 33
-                    "cg_caches.reliable_latlon,"    +    // 34
-                    "cg_caches.coordsChanged,"      +    // 35
-                    "cg_caches.latitude,"           +    // 36
-                    "cg_caches.longitude,"          +    // 37
-                    "cg_caches.finalDefined,"       +    // 38
-                    "cg_caches._id,"                +    // 39
-                    "cg_caches.inventorycoins,"     +    // 40
-                    "cg_caches.inventorytags,"      +    // 41
-                    "cg_caches.logPasswordRequired";     // 42
-
-    //TODO: remove "latlon" field from cache table
+                    "cg_caches.location,"           +    // 19
+                    "cg_caches.personal_note,"      +    // 20
+                    "cg_caches.shortdesc,"          +    // 21
+                    "cg_caches.favourite_cnt,"      +    // 22
+                    "cg_caches.rating,"             +    // 23
+                    "cg_caches.votes,"              +    // 24
+                    "cg_caches.myvote,"             +    // 25
+                    "cg_caches.disabled,"           +    // 26
+                    "cg_caches.archived,"           +    // 27
+                    "cg_caches.members,"            +    // 28
+                    "cg_caches.found,"              +    // 29
+                    "cg_caches.favourite,"          +    // 30
+                    "cg_caches.inventoryunknown,"   +    // 31
+                    "cg_caches.onWatchlist,"        +    // 32
+                    "cg_caches.reliable_latlon,"    +    // 33
+                    "cg_caches.coordsChanged,"      +    // 34
+                    "cg_caches.latitude,"           +    // 35
+                    "cg_caches.longitude,"          +    // 36
+                    "cg_caches.finalDefined,"       +    // 37
+                    "cg_caches._id,"                +    // 38
+                    "cg_caches.inventorycoins,"     +    // 39
+                    "cg_caches.inventorytags,"      +    // 40
+                    "cg_caches.logPasswordRequired";     // 41
 
     /** The list of fields needed for mapping. */
-    private static final String[] WAYPOINT_COLUMNS = new String[] { "_id", "geocode", "updated", "type", "prefix", "lookup", "name", "latlon", "latitude", "longitude", "note", "own", "visited" };
+    private static final String[] WAYPOINT_COLUMNS = new String[] { "_id", "geocode", "updated", "type", "prefix", "lookup", "name", "latitude", "longitude", "note", "own", "visited" };
 
     /** Number of days (as ms) after temporarily saved caches are deleted */
     private final static long DAYS_AFTER_CACHE_IS_DELETED = 3 * 24 * 60 * 60 * 1000;
@@ -149,19 +149,19 @@ public class DataStore {
     private static SQLiteDatabase database = null;
     private static final int dbVersion = 68;
     public static final int customListIdOffset = 10;
-    private static final String dbName = "data";
-    private static final String dbTableCaches = "cg_caches";
-    private static final String dbTableLists = "cg_lists";
-    private static final String dbTableAttributes = "cg_attributes";
-    private static final String dbTableWaypoints = "cg_waypoints";
-    private static final String dbTableSpoilers = "cg_spoilers";
-    private static final String dbTableLogs = "cg_logs";
-    private static final String dbTableLogCount = "cg_logCount";
-    private static final String dbTableLogImages = "cg_logImages";
-    private static final String dbTableLogsOffline = "cg_logs_offline";
-    private static final String dbTableTrackables = "cg_trackables";
-    private static final String dbTableSearchDestionationHistory = "cg_search_destination_history";
-    private static final String dbCreateCaches = ""
+    private static final @NonNull String dbName = "data";
+    private static final @NonNull String dbTableCaches = "cg_caches";
+    private static final @NonNull String dbTableLists = "cg_lists";
+    private static final @NonNull String dbTableAttributes = "cg_attributes";
+    private static final @NonNull String dbTableWaypoints = "cg_waypoints";
+    private static final @NonNull String dbTableSpoilers = "cg_spoilers";
+    private static final @NonNull String dbTableLogs = "cg_logs";
+    private static final @NonNull String dbTableLogCount = "cg_logCount";
+    private static final @NonNull String dbTableLogImages = "cg_logImages";
+    private static final @NonNull String dbTableLogsOffline = "cg_logs_offline";
+    private static final @NonNull String dbTableTrackables = "cg_trackables";
+    private static final @NonNull String dbTableSearchDestionationHistory = "cg_search_destination_history";
+    private static final @NonNull String dbCreateCaches = ""
             + "create table " + dbTableCaches + " ("
             + "_id integer primary key autoincrement, "
             + "updated long not null, "
@@ -181,7 +181,6 @@ public class DataStore {
             + "size text, "
             + "difficulty float, "
             + "terrain float, "
-            + "latlon text, "
             + "location text, "
             + "direction double, "
             + "distance double, "
@@ -212,9 +211,7 @@ public class DataStore {
             + "create table " + dbTableLists + " ("
             + "_id integer primary key autoincrement, "
             + "title text not null, "
-            + "updated long not null, "
-            + "latitude double, "
-            + "longitude double "
+            + "updated long not null"
             + "); ";
     private static final String dbCreateAttributes = ""
             + "create table " + dbTableAttributes + " ("
@@ -233,7 +230,6 @@ public class DataStore {
             + "prefix text, "
             + "lookup text, "
             + "name text, "
-            + "latlon text, "
             + "latitude double, "
             + "longitude double, "
             + "note text, "
@@ -323,7 +319,7 @@ public class DataStore {
             final DbHelper dbHelper = new DbHelper(new DBContext(CgeoApplication.getInstance()));
             try {
                 database = dbHelper.getWritableDatabase();
-            } catch (Exception e) {
+            } catch (final Exception e) {
                 Log.e("DataStore.init: unable to open database for R/W", e);
                 recreateDatabase(dbHelper);
             }
@@ -345,7 +341,7 @@ public class DataStore {
         }
         try {
             database = dbHelper.getWritableDatabase();
-        } catch (Exception f) {
+        } catch (final Exception f) {
             Log.e("DataStore.init: unable to recreate database and open it for R/W", f);
         }
     }
@@ -393,7 +389,7 @@ public class DataStore {
      */
     public static void moveDatabase(final Activity fromActivity) {
         final ProgressDialog dialog = ProgressDialog.show(fromActivity, fromActivity.getString(R.string.init_dbmove_dbmove), fromActivity.getString(R.string.init_dbmove_running), true, false);
-        AndroidObservable.fromActivity(fromActivity, Async.fromFunc0(new Func0<Boolean>() {
+        AndroidObservable.bindActivity(fromActivity, Async.fromCallable(new Func0<Boolean>() {
             @Override
             public Boolean call() {
                 if (!LocalStorage.isExternalStorageAvailable()) {
@@ -462,7 +458,7 @@ public class DataStore {
 
     private static class DBContext extends ContextWrapper {
 
-        public DBContext(Context base) {
+        public DBContext(final Context base) {
             super(base);
         }
 
@@ -471,8 +467,8 @@ public class DataStore {
          * causes issues on other devices too.
          */
         @Override
-        public SQLiteDatabase openOrCreateDatabase(String name, int mode,
-                CursorFactory factory) {
+        public SQLiteDatabase openOrCreateDatabase(final String name, final int mode,
+                final CursorFactory factory) {
             final File file = new File(name);
             FileUtils.mkdirs(file.getParentFile());
             return SQLiteDatabase.openOrCreateDatabase(file, factory);
@@ -484,12 +480,12 @@ public class DataStore {
 
         private static boolean firstRun = true;
 
-        DbHelper(Context context) {
+        DbHelper(final Context context) {
             super(context, databasePath().getPath(), null, dbVersion);
         }
 
         @Override
-        public void onCreate(SQLiteDatabase db) {
+        public void onCreate(final SQLiteDatabase db) {
             newlyCreatedDatabase = true;
             db.execSQL(dbCreateCaches);
             db.execSQL(dbCreateLists);
@@ -526,7 +522,7 @@ public class DataStore {
         }
 
         @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        public void onUpgrade(final SQLiteDatabase db, final int oldVersion, final int newVersion) {
             Log.i("Upgrade database from ver. " + oldVersion + " to ver. " + newVersion + ": start");
 
             try {
@@ -551,7 +547,7 @@ public class DataStore {
                             db.execSQL(dbCreateSearchDestinationHistory);
 
                             Log.i("Added table " + dbTableSearchDestionationHistory + ".");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 52", e);
                         }
                     }
@@ -561,7 +557,7 @@ public class DataStore {
                             db.execSQL("alter table " + dbTableCaches + " add column onWatchlist integer");
 
                             Log.i("Column onWatchlist added to " + dbTableCaches + ".");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 53", e);
                         }
                     }
@@ -569,7 +565,7 @@ public class DataStore {
                     if (oldVersion < 54) { // update to 54
                         try {
                             db.execSQL(dbCreateLogImages);
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 54", e);
 
                         }
@@ -578,7 +574,7 @@ public class DataStore {
                     if (oldVersion < 55) { // update to 55
                         try {
                             db.execSQL("alter table " + dbTableCaches + " add column personal_note text");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 55", e);
                         }
                     }
@@ -590,7 +586,7 @@ public class DataStore {
                             db.execSQL("update " + dbTableAttributes + " set attribute = " +
                                     "lower(attribute) where attribute like \"%_yes\" " +
                                     "or attribute like \"%_no\"");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 56", e);
                         }
                     }
@@ -605,7 +601,7 @@ public class DataStore {
                             db.execSQL("drop index in_e");
                             db.execSQL("drop index in_f");
                             createIndices(db);
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 57", e);
                         }
                     }
@@ -636,7 +632,6 @@ public class DataStore {
                                     + "size text, "
                                     + "difficulty float, "
                                     + "terrain float, "
-                                    + "latlon text, "
                                     + "location text, "
                                     + "direction double, "
                                     + "distance double, "
@@ -663,7 +658,7 @@ public class DataStore {
 
                             db.execSQL(dbCreateCachesTemp);
                             db.execSQL("insert into " + dbTableCachesTemp + " select _id,updated,detailed,detailedupdate,visiteddate,geocode,reason,cacheid,guid,type,name,own,owner,owner_real," +
-                                    "hidden,hint,size,difficulty,terrain,latlon,location,direction,distance,latitude,longitude, 0," +
+                                    "hidden,hint,size,difficulty,terrain,location,direction,distance,latitude,longitude, 0," +
                                     "personal_note,shortdesc,description,favourite_cnt,rating,votes,myvote,disabled,archived,members,found,favourite,inventorycoins," +
                                     "inventorytags,inventoryunknown,onWatchlist from " + dbTableCaches);
                             db.execSQL("drop table " + dbTableCaches);
@@ -679,13 +674,12 @@ public class DataStore {
                                     + "prefix text, "
                                     + "lookup text, "
                                     + "name text, "
-                                    + "latlon text, "
                                     + "latitude double, "
                                     + "longitude double, "
                                     + "note text "
                                     + "); ";
                             db.execSQL(dbCreateWaypointsTemp);
-                            db.execSQL("insert into " + dbTableWaypointsTemp + " select _id, geocode, updated, type, prefix, lookup, name, latlon, latitude, longitude, note from " + dbTableWaypoints);
+                            db.execSQL("insert into " + dbTableWaypointsTemp + " select _id, geocode, updated, type, prefix, lookup, name, latitude, longitude, note from " + dbTableWaypoints);
                             db.execSQL("drop table " + dbTableWaypoints);
                             db.execSQL("alter table " + dbTableWaypointsTemp + " rename to " + dbTableWaypoints);
 
@@ -694,7 +688,7 @@ public class DataStore {
                             db.setTransactionSuccessful();
 
                             Log.i("Removed latitude_string and longitude_string columns");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 58", e);
                         } finally {
                             db.endTransaction();
@@ -706,7 +700,7 @@ public class DataStore {
                             // Add new indices and remove obsolete cache files
                             createIndices(db);
                             removeObsoleteCacheDirectories(db);
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 59", e);
                         }
                     }
@@ -714,7 +708,7 @@ public class DataStore {
                     if (oldVersion < 60) {
                         try {
                             removeSecEmptyDirs();
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 60", e);
                         }
                     }
@@ -722,7 +716,7 @@ public class DataStore {
                         try {
                             db.execSQL("alter table " + dbTableLogs + " add column friend integer");
                             db.execSQL("alter table " + dbTableCaches + " add column coordsChanged integer default 0");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 61", e);
 
                         }
@@ -733,7 +727,7 @@ public class DataStore {
                             db.execSQL("alter table " + dbTableCaches + " add column finalDefined integer default 0");
                             db.execSQL("alter table " + dbTableWaypoints + " add column own integer default 0");
                             db.execSQL("update " + dbTableWaypoints + " set own = 1 where type = 'own'");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 62", e);
 
                         }
@@ -741,7 +735,7 @@ public class DataStore {
                     if (oldVersion < 63) {
                         try {
                             removeDoubleUnderscoreMapFiles();
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 63", e);
 
                         }
@@ -753,7 +747,7 @@ public class DataStore {
                             // rather than symbolic ones because the fix must be applied with the values at the time
                             // of the problem. The problem was introduced in release 2012.06.01.
                             db.execSQL("update " + dbTableCaches + " set reason=1 where reason=2");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 64", e);
                         }
                     }
@@ -762,7 +756,7 @@ public class DataStore {
                         try {
                             // Set all waypoints where name is Original coordinates to type ORIGINAL
                             db.execSQL("update " + dbTableWaypoints + " set type='original', own=0 where name='Original Coordinates'");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 65:", e);
                         }
                     }
@@ -770,7 +764,7 @@ public class DataStore {
                     if (oldVersion < 66) {
                         try {
                             db.execSQL("alter table " + dbTableWaypoints + " add column visited integer default 0");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 66", e);
 
                         }
@@ -780,7 +774,7 @@ public class DataStore {
                         try {
                             db.execSQL("update " + dbTableAttributes + " set attribute = 'easy_climbing_yes' where geocode like 'OC%' and attribute = 'climbing_yes'");
                             db.execSQL("update " + dbTableAttributes + " set attribute = 'easy_climbing_no' where geocode like 'OC%' and attribute = 'climbing_no'");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 67", e);
 
                         }
@@ -789,7 +783,7 @@ public class DataStore {
                     if (oldVersion < 68) {
                         try {
                             db.execSQL("alter table " + dbTableCaches + " add column logPasswordRequired integer default 0");
-                        } catch (Exception e) {
+                        } catch (final Exception e) {
                             Log.e("Failed to upgrade to ver. 68", e);
 
                         }
@@ -832,18 +826,20 @@ public class DataStore {
          * introduced with release on 2012-05-24.
          */
         private static void removeDoubleUnderscoreMapFiles() {
-            File[] geocodeDirs = LocalStorage.getStorage().listFiles();
-            final FilenameFilter filter = new FilenameFilter() {
-                @Override
-                public boolean accept(File dir, String filename) {
-                    return filename.startsWith("map_") && filename.contains("__");
-                }
-            };
-            for (final File dir : geocodeDirs) {
-                final File[] wrongFiles = dir.listFiles(filter);
-                if (wrongFiles != null) {
-                    for (final File wrongFile : wrongFiles) {
-                        FileUtils.deleteIgnoringFailure(wrongFile);
+            final File[] geocodeDirs = LocalStorage.getStorage().listFiles();
+            if (ArrayUtils.isNotEmpty(geocodeDirs)) {
+                final FilenameFilter filter = new FilenameFilter() {
+                    @Override
+                    public boolean accept(final File dir, final String filename) {
+                        return filename.startsWith("map_") && filename.contains("__");
+                    }
+                };
+                for (final File dir : geocodeDirs) {
+                    final File[] wrongFiles = dir.listFiles(filter);
+                    if (wrongFiles != null) {
+                        for (final File wrongFile : wrongFiles) {
+                            FileUtils.deleteIgnoringFailure(wrongFile);
+                        }
                     }
                 }
             }
@@ -864,48 +860,53 @@ public class DataStore {
      *            the read-write database to use
      */
     private static void removeObsoleteCacheDirectories(final SQLiteDatabase db) {
-        final Pattern oldFilePattern = Pattern.compile("^[GC|TB|EC|GK|O][A-Z0-9]{4,7}$");
-        final SQLiteStatement select = db.compileStatement("select count(*) from " + dbTableCaches + " where geocode = ?");
         final File[] files = LocalStorage.getStorage().listFiles();
-        final ArrayList<File> toRemove = new ArrayList<File>(files.length);
-        for (final File file : files) {
-            if (file.isDirectory()) {
-                final String geocode = file.getName();
-                if (oldFilePattern.matcher(geocode).find()) {
-                    select.bindString(1, geocode);
-                    if (select.simpleQueryForLong() == 0) {
-                        toRemove.add(file);
+        if (ArrayUtils.isNotEmpty(files)) {
+            final Pattern oldFilePattern = Pattern.compile("^[GC|TB|EC|GK|O][A-Z0-9]{4,7}$");
+            final SQLiteStatement select = db.compileStatement("select count(*) from " + dbTableCaches + " where geocode = ?");
+            final ArrayList<File> toRemove = new ArrayList<>(files.length);
+            for (final File file : files) {
+                if (file.isDirectory()) {
+                    final String geocode = file.getName();
+                    if (oldFilePattern.matcher(geocode).find()) {
+                        select.bindString(1, geocode);
+                        if (select.simpleQueryForLong() == 0) {
+                            toRemove.add(file);
+                        }
                     }
                 }
             }
-        }
 
-        // Use a background thread for the real removal to avoid keeping the database locked
-        // if we are called from within a transaction.
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                for (final File dir : toRemove) {
-                    Log.i("Removing obsolete cache directory for " + dir.getName());
-                    LocalStorage.deleteDirectory(dir);
+            // Use a background thread for the real removal to avoid keeping the database locked
+            // if we are called from within a transaction.
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    for (final File dir : toRemove) {
+                        Log.i("Removing obsolete cache directory for " + dir.getName());
+                        LocalStorage.deleteDirectory(dir);
+                    }
                 }
-            }
-        }).start();
+            }).start();
+        }
     }
 
     /*
      * Remove empty directories created in the secondary storage area.
      */
     private static void removeSecEmptyDirs() {
-        for (final File file : LocalStorage.getStorageSec().listFiles()) {
-            if (file.isDirectory()) {
-                // This will silently fail if the directory is not empty.
-                FileUtils.deleteIgnoringFailure(file);
+        final File[] files = LocalStorage.getStorageSec().listFiles();
+        if (ArrayUtils.isNotEmpty(files)) {
+            for (final File file : files) {
+                if (file.isDirectory()) {
+                    // This will silently fail if the directory is not empty.
+                    FileUtils.deleteIgnoringFailure(file);
+                }
             }
         }
     }
 
-    private static void dropDatabase(SQLiteDatabase db) {
+    private static void dropDatabase(final SQLiteDatabase db) {
         db.execSQL("drop table if exists " + dbTableCaches);
         db.execSQL("drop table if exists " + dbTableAttributes);
         db.execSQL("drop table if exists " + dbTableWaypoints);
@@ -916,7 +917,7 @@ public class DataStore {
         db.execSQL("drop table if exists " + dbTableTrackables);
     }
 
-    public static boolean isThere(String geocode, String guid, boolean detailed, boolean checkTime) {
+    public static boolean isThere(final String geocode, final String guid, final boolean detailed, final boolean checkTime) {
         init();
 
         long dataUpdated = 0;
@@ -981,7 +982,7 @@ public class DataStore {
     }
 
     /** is cache stored in one of the lists (not only temporary) */
-    public static boolean isOffline(String geocode, String guid) {
+    public static boolean isOffline(final String geocode, final String guid) {
         if (StringUtils.isBlank(geocode) && StringUtils.isBlank(guid)) {
             return false;
         }
@@ -1000,18 +1001,18 @@ public class DataStore {
             }
             synchronized (listId) {
                 listId.bindString(1, value);
-                return listId.simpleQueryForLong() != StoredList.TEMPORARY_LIST_ID;
+                return listId.simpleQueryForLong() != StoredList.TEMPORARY_LIST.id;
             }
-        } catch (SQLiteDoneException e) {
+        } catch (final SQLiteDoneException ignored) {
             // Do nothing, it only means we have no information on the cache
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.isOffline", e);
         }
 
         return false;
     }
 
-    public static String getGeocodeForGuid(String guid) {
+    public static String getGeocodeForGuid(final String guid) {
         if (StringUtils.isBlank(guid)) {
             return null;
         }
@@ -1023,31 +1024,10 @@ public class DataStore {
                 description.bindString(1, guid);
                 return description.simpleQueryForString();
             }
-        } catch (SQLiteDoneException e) {
+        } catch (final SQLiteDoneException ignored) {
             // Do nothing, it only means we have no information on the cache
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.getGeocodeForGuid", e);
-        }
-
-        return null;
-    }
-
-    public static String getCacheidForGeocode(String geocode) {
-        if (StringUtils.isBlank(geocode)) {
-            return null;
-        }
-        init();
-
-        try {
-            final SQLiteStatement description = PreparedStatements.getCacheIdOfGeocode();
-            synchronized (description) {
-                description.bindString(1, geocode);
-                return description.simpleQueryForString();
-            }
-        } catch (SQLiteDoneException e) {
-            // Do nothing, it only means we have no information on the cache
-        } catch (Exception e) {
-            Log.e("DataStore.getCacheidForGeocode", e);
         }
 
         return null;
@@ -1061,7 +1041,7 @@ public class DataStore {
      * @param saveFlags
      *
      */
-    public static void saveCache(Geocache cache, EnumSet<LoadFlags.SaveFlag> saveFlags) {
+    public static void saveCache(final Geocache cache, final Set<LoadFlags.SaveFlag> saveFlags) {
         saveCaches(Collections.singletonList(cache), saveFlags);
     }
 
@@ -1073,15 +1053,15 @@ public class DataStore {
      * @param saveFlags
      *
      */
-    public static void saveCaches(Collection<Geocache> caches, EnumSet<LoadFlags.SaveFlag> saveFlags) {
+    public static void saveCaches(final Collection<Geocache> caches, final Set<LoadFlags.SaveFlag> saveFlags) {
         if (CollectionUtils.isEmpty(caches)) {
             return;
         }
-        final ArrayList<String> cachesFromDatabase = new ArrayList<String>();
-        final HashMap<String, Geocache> existingCaches = new HashMap<String, Geocache>();
+        final ArrayList<String> cachesFromDatabase = new ArrayList<>();
+        final HashMap<String, Geocache> existingCaches = new HashMap<>();
 
         // first check which caches are in the memory cache
-        for (Geocache cache : caches) {
+        for (final Geocache cache : caches) {
             final String geocode = cache.getGeocode();
             final Geocache cacheFromCache = cacheCache.getCacheFromCache(geocode);
             if (cacheFromCache == null) {
@@ -1093,18 +1073,18 @@ public class DataStore {
         }
 
         // then load all remaining caches from the database in one step
-        for (Geocache cacheFromDatabase : loadCaches(cachesFromDatabase, LoadFlags.LOAD_ALL_DB_ONLY)) {
+        for (final Geocache cacheFromDatabase : loadCaches(cachesFromDatabase, LoadFlags.LOAD_ALL_DB_ONLY)) {
             existingCaches.put(cacheFromDatabase.getGeocode(), cacheFromDatabase);
         }
 
-        final ArrayList<Geocache> toBeStored = new ArrayList<Geocache>();
+        final ArrayList<Geocache> toBeStored = new ArrayList<>();
         // Merge with the data already stored in the CacheCache or in the database if
         // the cache had not been loaded before, and update the CacheCache.
         // Also, a DB update is required if the merge data comes from the CacheCache
         // (as it may be more recent than the version in the database), or if the
         // version coming from the database is different than the version we are entering
         // into the cache (that includes absence from the database).
-        for (Geocache cache : caches) {
+        for (final Geocache cache : caches) {
             final String geocode = cache.getGeocode();
             final Geocache existingCache = existingCaches.get(geocode);
             final boolean dbUpdateRequired = !cache.gatherMissingFrom(existingCache) || cacheCache.getCacheFromCache(geocode) != null;
@@ -1113,12 +1093,12 @@ public class DataStore {
 
             // Only save the cache in the database if it is requested by the caller and
             // the cache contains detailed information.
-            if (saveFlags.contains(SaveFlag.SAVE_DB) && cache.isDetailed() && dbUpdateRequired) {
+            if (saveFlags.contains(SaveFlag.DB) && cache.isDetailed() && dbUpdateRequired) {
                 toBeStored.add(cache);
             }
         }
 
-        for (Geocache geocache : toBeStored) {
+        for (final Geocache geocache : toBeStored) {
             storeIntoDatabase(geocache);
         }
     }
@@ -1128,7 +1108,7 @@ public class DataStore {
         cacheCache.putCacheInCache(cache);
         Log.d("Saving " + cache.toString() + " (" + cache.getListId() + ") to DB");
 
-        ContentValues values = new ContentValues();
+        final ContentValues values = new ContentValues();
 
         if (cache.getUpdated() == 0) {
             values.put("updated", System.currentTimeMillis());
@@ -1188,11 +1168,10 @@ public class DataStore {
             saveAttributesWithoutTransaction(cache);
             saveWaypointsWithoutTransaction(cache);
             saveSpoilersWithoutTransaction(cache);
-            saveLogsWithoutTransaction(cache.getGeocode(), cache.getLogs());
             saveLogCountsWithoutTransaction(cache);
             saveInventoryWithoutTransaction(cache.getGeocode(), cache.getInventory());
 
-            int rows = database.update(dbTableCaches, values, "geocode = ?", new String[] { cache.getGeocode() });
+            final int rows = database.update(dbTableCaches, values, "geocode = ?", new String[] { cache.getGeocode() });
             if (rows == 0) {
                 // cache is not in the DB, insert it
                 /* long id = */
@@ -1200,7 +1179,7 @@ public class DataStore {
             }
             database.setTransactionSuccessful();
             return true;
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("SaveCache", e);
         } finally {
             database.endTransaction();
@@ -1220,7 +1199,7 @@ public class DataStore {
         if (attributes.isEmpty()) {
             return;
         }
-        SQLiteStatement statement = PreparedStatements.getInsertAttribute();
+        final SQLiteStatement statement = PreparedStatements.getInsertAttribute();
         final long timestamp = System.currentTimeMillis();
         for (final String attribute : attributes) {
             statement.bindString(1, geocode);
@@ -1243,10 +1222,10 @@ public class DataStore {
         database.beginTransaction();
 
         try {
-            SQLiteStatement insertDestination = PreparedStatements.getInsertSearchDestination(destination);
+            final SQLiteStatement insertDestination = PreparedStatements.getInsertSearchDestination(destination);
             insertDestination.executeInsert();
             database.setTransactionSuccessful();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("Updating searchedDestinations db failed", e);
         } finally {
             database.endTransaction();
@@ -1261,7 +1240,7 @@ public class DataStore {
             saveWaypointsWithoutTransaction(cache);
             database.setTransactionSuccessful();
             return true;
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("saveWaypoints", e);
         } finally {
             database.endTransaction();
@@ -1270,14 +1249,14 @@ public class DataStore {
     }
 
     private static void saveWaypointsWithoutTransaction(final Geocache cache) {
-        String geocode = cache.getGeocode();
+        final String geocode = cache.getGeocode();
 
-        List<Waypoint> waypoints = cache.getWaypoints();
+        final List<Waypoint> waypoints = cache.getWaypoints();
         if (CollectionUtils.isNotEmpty(waypoints)) {
-            final ArrayList<String> currentWaypointIds = new ArrayList<String>();
-            ContentValues values = new ContentValues();
-            long timeStamp = System.currentTimeMillis();
-            for (Waypoint oneWaypoint : waypoints) {
+            final ArrayList<String> currentWaypointIds = new ArrayList<>();
+            final ContentValues values = new ContentValues();
+            final long timeStamp = System.currentTimeMillis();
+            for (final Waypoint oneWaypoint : waypoints) {
 
                 values.clear();
                 values.put("geocode", geocode);
@@ -1286,7 +1265,6 @@ public class DataStore {
                 values.put("prefix", oneWaypoint.getPrefix());
                 values.put("lookup", oneWaypoint.getLookup());
                 values.put("name", oneWaypoint.getName());
-                values.put("latlon", oneWaypoint.getLatlon());
                 putCoords(values, oneWaypoint.getCoords());
                 values.put("note", oneWaypoint.getNote());
                 values.put("own", oneWaypoint.isUserDefined() ? 1 : 0);
@@ -1348,7 +1326,7 @@ public class DataStore {
         return new Geopoint(cursor.getDouble(indexLat), cursor.getDouble(indexLon));
     }
 
-    private static boolean saveWaypointInternal(int id, String geocode, Waypoint waypoint) {
+    private static boolean saveWaypointInternal(final int id, final String geocode, final Waypoint waypoint) {
         if ((StringUtils.isBlank(geocode) && id <= 0) || waypoint == null) {
             return false;
         }
@@ -1358,14 +1336,13 @@ public class DataStore {
         database.beginTransaction();
         boolean ok = false;
         try {
-            ContentValues values = new ContentValues();
+            final ContentValues values = new ContentValues();
             values.put("geocode", geocode);
             values.put("updated", System.currentTimeMillis());
             values.put("type", waypoint.getWaypointType() != null ? waypoint.getWaypointType().id : null);
             values.put("prefix", waypoint.getPrefix());
             values.put("lookup", waypoint.getLookup());
             values.put("name", waypoint.getName());
-            values.put("latlon", waypoint.getLatlon());
             putCoords(values, waypoint.getCoords());
             values.put("note", waypoint.getNote());
             values.put("own", waypoint.isUserDefined() ? 1 : 0);
@@ -1386,7 +1363,7 @@ public class DataStore {
         return ok;
     }
 
-    public static boolean deleteWaypoint(int id) {
+    public static boolean deleteWaypoint(final int id) {
         if (id == 0) {
             return false;
         }
@@ -1397,14 +1374,14 @@ public class DataStore {
     }
 
     private static void saveSpoilersWithoutTransaction(final Geocache cache) {
-        String geocode = cache.getGeocode();
+        final String geocode = cache.getGeocode();
         database.delete(dbTableSpoilers, "geocode = ?", new String[]{geocode});
 
-        List<Image> spoilers = cache.getSpoilers();
+        final List<Image> spoilers = cache.getSpoilers();
         if (CollectionUtils.isNotEmpty(spoilers)) {
-            SQLiteStatement insertSpoiler = PreparedStatements.getInsertSpoiler();
+            final SQLiteStatement insertSpoiler = PreparedStatements.getInsertSpoiler();
             final long timestamp = System.currentTimeMillis();
-            for (Image spoiler : spoilers) {
+            for (final Image spoiler : spoilers) {
                 insertSpoiler.bindString(1, geocode);
                 insertSpoiler.bindLong(2, timestamp);
                 insertSpoiler.bindString(3, spoiler.getUrl());
@@ -1421,17 +1398,13 @@ public class DataStore {
         }
     }
 
-    private static void saveLogsWithoutTransaction(final String geocode, final List<LogEntry> logs) {
+    public static void saveLogsWithoutTransaction(final String geocode, final Iterable<LogEntry> logs) {
         // TODO delete logimages referring these logs
         database.delete(dbTableLogs, "geocode = ?", new String[]{geocode});
 
-        if (logs.isEmpty()) {
-            return;
-        }
-
-        SQLiteStatement insertLog = PreparedStatements.getInsertLog();
+        final SQLiteStatement insertLog = PreparedStatements.getInsertLog();
         final long timestamp = System.currentTimeMillis();
-        for (LogEntry log : logs) {
+        for (final LogEntry log : logs) {
             insertLog.bindString(1, geocode);
             insertLog.bindLong(2, timestamp);
             insertLog.bindLong(3, log.type.id);
@@ -1440,10 +1413,10 @@ public class DataStore {
             insertLog.bindLong(6, log.date);
             insertLog.bindLong(7, log.found);
             insertLog.bindLong(8, log.friend ? 1 : 0);
-            long logId = insertLog.executeInsert();
+            final long logId = insertLog.executeInsert();
             if (log.hasLogImages()) {
-                SQLiteStatement insertImage = PreparedStatements.getInsertLogImage();
-                for (Image img : log.getLogImages()) {
+                final SQLiteStatement insertImage = PreparedStatements.getInsertLogImage();
+                for (final Image img : log.getLogImages()) {
                     insertImage.bindLong(1, logId);
                     insertImage.bindString(2, img.getTitle());
                     insertImage.bindString(3, img.getUrl());
@@ -1454,15 +1427,15 @@ public class DataStore {
     }
 
     private static void saveLogCountsWithoutTransaction(final Geocache cache) {
-        String geocode = cache.getGeocode();
+        final String geocode = cache.getGeocode();
         database.delete(dbTableLogCount, "geocode = ?", new String[]{geocode});
 
-        Map<LogType, Integer> logCounts = cache.getLogCounts();
+        final Map<LogType, Integer> logCounts = cache.getLogCounts();
         if (MapUtils.isNotEmpty(logCounts)) {
-            Set<Entry<LogType, Integer>> logCountsItems = logCounts.entrySet();
-            SQLiteStatement insertLogCounts = PreparedStatements.getInsertLogCounts();
+            final Set<Entry<LogType, Integer>> logCountsItems = logCounts.entrySet();
+            final SQLiteStatement insertLogCounts = PreparedStatements.getInsertLogCounts();
             final long timestamp = System.currentTimeMillis();
-            for (Entry<LogType, Integer> pair : logCountsItems) {
+            for (final Entry<LogType, Integer> pair : logCountsItems) {
                 insertLogCounts.bindString(1, geocode);
                 insertLogCounts.bindLong(2, timestamp);
                 insertLogCounts.bindLong(3, pair.getKey().id);
@@ -1491,9 +1464,9 @@ public class DataStore {
         }
 
         if (CollectionUtils.isNotEmpty(trackables)) {
-            ContentValues values = new ContentValues();
-            long timeStamp = System.currentTimeMillis();
-            for (Trackable trackable : trackables) {
+            final ContentValues values = new ContentValues();
+            final long timeStamp = System.currentTimeMillis();
+            for (final Trackable trackable : trackables) {
                 final String tbCode = trackable.getGeocode();
                 if (StringUtils.isNotBlank(tbCode)) {
                     database.delete(dbTableTrackables, "tbcode = ?", new String[] { tbCode });
@@ -1555,15 +1528,15 @@ public class DataStore {
      */
     public static Set<Geocache> loadCaches(final Collection<String> geocodes, final EnumSet<LoadFlag> loadFlags) {
         if (CollectionUtils.isEmpty(geocodes)) {
-            return new HashSet<Geocache>();
+            return new HashSet<>();
         }
 
-        Set<Geocache> result = new HashSet<Geocache>();
-        Set<String> remaining = new HashSet<String>(geocodes);
+        final Set<Geocache> result = new HashSet<>(geocodes.size());
+        final Set<String> remaining = new HashSet<>(geocodes);
 
-        if (loadFlags.contains(LoadFlag.LOAD_CACHE_BEFORE)) {
-            for (String geocode : new HashSet<String>(remaining)) {
-                Geocache cache = cacheCache.getCacheFromCache(geocode);
+        if (loadFlags.contains(LoadFlag.CACHE_BEFORE)) {
+            for (final String geocode : new HashSet<>(remaining)) {
+                final Geocache cache = cacheCache.getCacheFromCache(geocode);
                 if (cache != null) {
                     result.add(cache);
                     remaining.remove(cache.getGeocode());
@@ -1571,13 +1544,13 @@ public class DataStore {
             }
         }
 
-        if (loadFlags.contains(LoadFlag.LOAD_DB_MINIMAL) ||
-                loadFlags.contains(LoadFlag.LOAD_ATTRIBUTES) ||
-                loadFlags.contains(LoadFlag.LOAD_WAYPOINTS) ||
-                loadFlags.contains(LoadFlag.LOAD_SPOILERS) ||
-                loadFlags.contains(LoadFlag.LOAD_LOGS) ||
-                loadFlags.contains(LoadFlag.LOAD_INVENTORY) ||
-                loadFlags.contains(LoadFlag.LOAD_OFFLINE_LOG)) {
+        if (loadFlags.contains(LoadFlag.DB_MINIMAL) ||
+                loadFlags.contains(LoadFlag.ATTRIBUTES) ||
+                loadFlags.contains(LoadFlag.WAYPOINTS) ||
+                loadFlags.contains(LoadFlag.SPOILERS) ||
+                loadFlags.contains(LoadFlag.LOGS) ||
+                loadFlags.contains(LoadFlag.INVENTORY) ||
+                loadFlags.contains(LoadFlag.OFFLINE_LOG)) {
 
             final Set<Geocache> cachesFromDB = loadCachesFromGeocodes(remaining, loadFlags);
             result.addAll(cachesFromDB);
@@ -1586,9 +1559,9 @@ public class DataStore {
             }
         }
 
-        if (loadFlags.contains(LoadFlag.LOAD_CACHE_AFTER)) {
-            for (String geocode : new HashSet<String>(remaining)) {
-                Geocache cache = cacheCache.getCacheFromCache(geocode);
+        if (loadFlags.contains(LoadFlag.CACHE_AFTER)) {
+            for (final String geocode : new HashSet<>(remaining)) {
+                final Geocache cache = cacheCache.getCacheFromCache(geocode);
                 if (cache != null) {
                     result.add(cache);
                     remaining.remove(cache.getGeocode());
@@ -1618,44 +1591,43 @@ public class DataStore {
         init();
 
         final StringBuilder query = new StringBuilder(QUERY_CACHE_DATA);
-        if (loadFlags.contains(LoadFlag.LOAD_OFFLINE_LOG)) {
+        if (loadFlags.contains(LoadFlag.OFFLINE_LOG)) {
             query.append(',').append(dbTableLogsOffline).append(".log");
         }
 
         query.append(" FROM ").append(dbTableCaches);
-        if (loadFlags.contains(LoadFlag.LOAD_OFFLINE_LOG)) {
+        if (loadFlags.contains(LoadFlag.OFFLINE_LOG)) {
             query.append(" LEFT OUTER JOIN ").append(dbTableLogsOffline).append(" ON ( ").append(dbTableCaches).append(".geocode == ").append(dbTableLogsOffline).append(".geocode) ");
         }
 
         query.append(" WHERE ").append(dbTableCaches).append('.');
         query.append(DataStore.whereGeocodeIn(geocodes));
 
-        Cursor cursor = database.rawQuery(query.toString(), null);
+        final Cursor cursor = database.rawQuery(query.toString(), null);
         try {
-            final Set<Geocache> caches = new HashSet<Geocache>();
+            final Set<Geocache> caches = new HashSet<>();
             int logIndex = -1;
 
             while (cursor.moveToNext()) {
-                Geocache cache = DataStore.createCacheFromDatabaseContent(cursor);
+                final Geocache cache = createCacheFromDatabaseContent(cursor);
 
-                if (loadFlags.contains(LoadFlag.LOAD_ATTRIBUTES)) {
+                if (loadFlags.contains(LoadFlag.ATTRIBUTES)) {
                     cache.setAttributes(loadAttributes(cache.getGeocode()));
                 }
 
-                if (loadFlags.contains(LoadFlag.LOAD_WAYPOINTS)) {
+                if (loadFlags.contains(LoadFlag.WAYPOINTS)) {
                     final List<Waypoint> waypoints = loadWaypoints(cache.getGeocode());
                     if (CollectionUtils.isNotEmpty(waypoints)) {
                         cache.setWaypoints(waypoints, false);
                     }
                 }
 
-                if (loadFlags.contains(LoadFlag.LOAD_SPOILERS)) {
+                if (loadFlags.contains(LoadFlag.SPOILERS)) {
                     final List<Image> spoilers = loadSpoilers(cache.getGeocode());
                     cache.setSpoilers(spoilers);
                 }
 
-                if (loadFlags.contains(LoadFlag.LOAD_LOGS)) {
-                    cache.setLogs(loadLogs(cache.getGeocode()));
+                if (loadFlags.contains(LoadFlag.LOGS)) {
                     final Map<LogType, Integer> logCounts = loadLogCounts(cache.getGeocode());
                     if (MapUtils.isNotEmpty(logCounts)) {
                         cache.getLogCounts().clear();
@@ -1663,7 +1635,7 @@ public class DataStore {
                     }
                 }
 
-                if (loadFlags.contains(LoadFlag.LOAD_INVENTORY)) {
+                if (loadFlags.contains(LoadFlag.INVENTORY)) {
                     final List<Trackable> inventory = loadInventory(cache.getGeocode());
                     if (CollectionUtils.isNotEmpty(inventory)) {
                         if (cache.getInventory() == null) {
@@ -1675,7 +1647,7 @@ public class DataStore {
                     }
                 }
 
-                if (loadFlags.contains(LoadFlag.LOAD_OFFLINE_LOG)) {
+                if (loadFlags.contains(LoadFlag.OFFLINE_LOG)) {
                     if (logIndex < 0) {
                         logIndex = cursor.getColumnIndex("log");
                     }
@@ -1711,8 +1683,8 @@ public class DataStore {
      * @param cursor
      * @return Cache from DB
      */
-    private static Geocache createCacheFromDatabaseContent(Cursor cursor) {
-        Geocache cache = new Geocache();
+    private static Geocache createCacheFromDatabaseContent(final Cursor cursor) {
+        final Geocache cache = new Geocache();
 
         cache.setUpdated(cursor.getLong(0));
         cache.setListId(cursor.getInt(1));
@@ -1726,7 +1698,7 @@ public class DataStore {
         cache.setName(cursor.getString(9));
         cache.setOwnerDisplayName(cursor.getString(10));
         cache.setOwnerUserId(cursor.getString(11));
-        long dateValue = cursor.getLong(12);
+        final long dateValue = cursor.getLong(12);
         if (dateValue != 0) {
             cache.setHidden(new Date(dateValue));
         }
@@ -1747,32 +1719,32 @@ public class DataStore {
         }
         cache.setTerrain(cursor.getFloat(18));
         // do not set cache.location
-        cache.setCoords(getCoords(cursor, 36, 37));
-        cache.setPersonalNote(cursor.getString(21));
+        cache.setPersonalNote(cursor.getString(20));
         // do not set cache.shortdesc
         // do not set cache.description
-        cache.setFavoritePoints(cursor.getInt(23));
-        cache.setRating(cursor.getFloat(24));
-        cache.setVotes(cursor.getInt(25));
-        cache.setMyVote(cursor.getFloat(26));
-        cache.setDisabled(cursor.getInt(27) == 1);
-        cache.setArchived(cursor.getInt(28) == 1);
-        cache.setPremiumMembersOnly(cursor.getInt(29) == 1);
-        cache.setFound(cursor.getInt(30) == 1);
-        cache.setFavorite(cursor.getInt(31) == 1);
-        cache.setInventoryItems(cursor.getInt(32));
-        cache.setOnWatchlist(cursor.getInt(33) == 1);
-        cache.setReliableLatLon(cursor.getInt(34) > 0);
-        cache.setUserModifiedCoords(cursor.getInt(35) > 0);
-        cache.setFinalDefined(cursor.getInt(38) > 0);
-        cache.setLogPasswordRequired(cursor.getInt(42) > 0);
+        cache.setFavoritePoints(cursor.getInt(22));
+        cache.setRating(cursor.getFloat(23));
+        cache.setVotes(cursor.getInt(24));
+        cache.setMyVote(cursor.getFloat(25));
+        cache.setDisabled(cursor.getInt(26) == 1);
+        cache.setArchived(cursor.getInt(27) == 1);
+        cache.setPremiumMembersOnly(cursor.getInt(28) == 1);
+        cache.setFound(cursor.getInt(29) == 1);
+        cache.setFavorite(cursor.getInt(30) == 1);
+        cache.setInventoryItems(cursor.getInt(31));
+        cache.setOnWatchlist(cursor.getInt(32) == 1);
+        cache.setReliableLatLon(cursor.getInt(33) > 0);
+        cache.setUserModifiedCoords(cursor.getInt(34) > 0);
+        cache.setCoords(getCoords(cursor, 35, 36));
+        cache.setFinalDefined(cursor.getInt(37) > 0);
+        cache.setLogPasswordRequired(cursor.getInt(41) > 0);
 
         Log.d("Loading " + cache.toString() + " (" + cache.getListId() + ") from DB");
 
         return cache;
     }
 
-    public static List<String> loadAttributes(String geocode) {
+    public static List<String> loadAttributes(final String geocode) {
         if (StringUtils.isBlank(geocode)) {
             return null;
         }
@@ -1789,7 +1761,7 @@ public class DataStore {
                 GET_STRING_0);
     }
 
-    public static Waypoint loadWaypoint(int id) {
+    public static Waypoint loadWaypoint(final int id) {
         if (id == 0) {
             return null;
         }
@@ -1847,7 +1819,6 @@ public class DataStore {
         waypoint.setGeocode(cursor.getString(cursor.getColumnIndex("geocode")));
         waypoint.setPrefix(cursor.getString(cursor.getColumnIndex("prefix")));
         waypoint.setLookup(cursor.getString(cursor.getColumnIndex("lookup")));
-        waypoint.setLatlon(cursor.getString(cursor.getColumnIndex("latlon")));
         waypoint.setCoords(getCoords(cursor, cursor.getColumnIndex("latitude"), cursor.getColumnIndex("longitude")));
         waypoint.setNote(cursor.getString(cursor.getColumnIndex("note")));
 
@@ -1908,7 +1879,7 @@ public class DataStore {
             database.delete(dbTableSearchDestionationHistory, null, null);
             database.setTransactionSuccessful();
             return true;
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("Unable to clear searched destinations", e);
         } finally {
             database.endTransaction();
@@ -1917,8 +1888,13 @@ public class DataStore {
         return false;
     }
 
-    public static List<LogEntry> loadLogs(String geocode) {
-        List<LogEntry> logs = new ArrayList<LogEntry>();
+    /**
+     * @param geocode
+     * @return an immutable, non null list of logs
+     */
+    @NonNull
+    public static List<LogEntry> loadLogs(final String geocode) {
+        final List<LogEntry> logs = new ArrayList<>();
 
         if (StringUtils.isBlank(geocode)) {
             return logs;
@@ -1952,17 +1928,17 @@ public class DataStore {
 
         cursor.close();
 
-        return logs;
+        return Collections.unmodifiableList(logs);
     }
 
-    public static Map<LogType, Integer> loadLogCounts(String geocode) {
+    public static Map<LogType, Integer> loadLogCounts(final String geocode) {
         if (StringUtils.isBlank(geocode)) {
             return null;
         }
 
         init();
 
-        final Map<LogType, Integer> logCounts = new HashMap<LogType, Integer>();
+        final Map<LogType, Integer> logCounts = new EnumMap<>(LogType.class);
 
         final Cursor cursor = database.query(
                 dbTableLogCount,
@@ -1983,14 +1959,14 @@ public class DataStore {
         return logCounts;
     }
 
-    private static List<Trackable> loadInventory(String geocode) {
+    private static List<Trackable> loadInventory(final String geocode) {
         if (StringUtils.isBlank(geocode)) {
             return null;
         }
 
         init();
 
-        final List<Trackable> trackables = new ArrayList<Trackable>();
+        final List<Trackable> trackables = new ArrayList<>();
 
         final Cursor cursor = database.query(
                 dbTableTrackables,
@@ -2044,7 +2020,7 @@ public class DataStore {
         final String released = cursor.getString(cursor.getColumnIndex("released"));
         if (released != null) {
             try {
-                long releaseMilliSeconds = Long.parseLong(released);
+                final long releaseMilliSeconds = Long.parseLong(released);
                 trackable.setReleased(new Date(releaseMilliSeconds));
             } catch (final NumberFormatException e) {
                 Log.e("createTrackableFromDatabaseContent", e);
@@ -2073,7 +2049,7 @@ public class DataStore {
         init();
 
         try {
-            StringBuilder sql = new StringBuilder("select count(_id) from " + dbTableCaches + " where detailed = 1");
+            final StringBuilder sql = new StringBuilder("select count(_id) from " + dbTableCaches + " where detailed = 1");
             String typeKey;
             int reasonIndex;
             if (cacheType != CacheType.ALL) {
@@ -2094,9 +2070,9 @@ public class DataStore {
                 listKey = "list";
             }
 
-            String key = "CountCaches_" + typeKey + "_" + listKey;
+            final String key = "CountCaches_" + typeKey + "_" + listKey;
 
-            SQLiteStatement compiledStmnt = PreparedStatements.getStatement(key, sql.toString());
+            final SQLiteStatement compiledStmnt = PreparedStatements.getStatement(key, sql.toString());
             if (cacheType != CacheType.ALL) {
                 compiledStmnt.bindString(1, cacheType.id);
             }
@@ -2104,7 +2080,7 @@ public class DataStore {
                 compiledStmnt.bindLong(reasonIndex, list);
             }
             return (int) compiledStmnt.simpleQueryForLong();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.loadAllStoredCachesCount", e);
         }
 
@@ -2116,7 +2092,7 @@ public class DataStore {
 
         try {
             return (int) PreparedStatements.getCountHistoryCaches().simpleQueryForLong();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.getAllHistoricCachesCount", e);
         }
 
@@ -2187,18 +2163,17 @@ public class DataStore {
                         null,
                         new HashSet<String>(),
                         GET_STRING_0);
-            } else {
-                return queryToColl(dbTableCaches,
-                        new String[]{"geocode"},
-                        selection.toString(),
-                        selectionArgs,
-                        null,
-                        null,
-                        "geocode",
-                        null,
-                        new HashSet<String>(),
-                        GET_STRING_0);
             }
+            return queryToColl(dbTableCaches,
+                    new String[] { "geocode" },
+                    selection.toString(),
+                    selectionArgs,
+                    null,
+                    null,
+                    "geocode",
+                    null,
+                    new HashSet<String>(),
+                    GET_STRING_0);
         } catch (final Exception e) {
             Log.e("DataStore.loadBatchOfStoredGeocodes", e);
             return Collections.emptySet();
@@ -2228,7 +2203,7 @@ public class DataStore {
                     null,
                     new HashSet<String>(),
                     GET_STRING_0);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.loadBatchOfHistoricGeocodes", e);
         }
 
@@ -2258,7 +2233,7 @@ public class DataStore {
      * @return Set with geocodes
      */
     private static SearchResult loadInViewport(final boolean stored, final Viewport viewport, final CacheType cacheType) {
-        final Set<String> geocodes = new HashSet<String>();
+        final Set<String> geocodes = new HashSet<>();
 
         // if not stored only, get codes from CacheCache as well
         if (!stored) {
@@ -2312,7 +2287,7 @@ public class DataStore {
         Log.d("Database clean: started");
 
         try {
-            Set<String> geocodes = new HashSet<String>();
+            Set<String> geocodes = new HashSet<>();
             if (more) {
                 queryToColl(dbTableCaches,
                         new String[]{"geocode"},
@@ -2345,6 +2320,11 @@ public class DataStore {
                 Log.d("Database clean: removing " + geocodes.size() + " geocaches from listId=0");
                 removeCaches(geocodes, LoadFlags.REMOVE_ALL);
             }
+
+            // This cleanup needs to be kept in place for about one year so that older log images records are
+            // cleaned. TO BE REMOVED AFTER 2015-03-24.
+            Log.d("Database clean: removing obsolete log images records");
+            database.delete(dbTableLogImages, "log_id NOT IN (SELECT _id FROM " + dbTableLogs + ")", null);
         } catch (final Exception e) {
             Log.w("DataStore.clean", e);
         }
@@ -2383,7 +2363,7 @@ public class DataStore {
         cacheCache.removeAllFromCache();
     }
 
-    public static void removeCache(final String geocode, EnumSet<LoadFlags.RemoveFlag> removeFlags) {
+    public static void removeCache(final String geocode, final EnumSet<LoadFlags.RemoveFlag> removeFlags) {
         removeCaches(Collections.singleton(geocode), removeFlags);
     }
 
@@ -2393,22 +2373,22 @@ public class DataStore {
      * @param geocodes
      *            list of geocodes to drop from cache
      */
-    public static void removeCaches(final Set<String> geocodes, EnumSet<LoadFlags.RemoveFlag> removeFlags) {
+    public static void removeCaches(final Set<String> geocodes, final EnumSet<LoadFlags.RemoveFlag> removeFlags) {
         if (CollectionUtils.isEmpty(geocodes)) {
             return;
         }
 
         init();
 
-        if (removeFlags.contains(RemoveFlag.REMOVE_CACHE)) {
+        if (removeFlags.contains(RemoveFlag.CACHE)) {
             for (final String geocode : geocodes) {
                 cacheCache.removeCacheFromCache(geocode);
             }
         }
 
-        if (removeFlags.contains(RemoveFlag.REMOVE_DB)) {
+        if (removeFlags.contains(RemoveFlag.DB)) {
             // Drop caches from the database
-            final ArrayList<String> quotedGeocodes = new ArrayList<String>(geocodes.size());
+            final ArrayList<String> quotedGeocodes = new ArrayList<>(geocodes.size());
             for (final String geocode : geocodes) {
                 quotedGeocodes.add(DatabaseUtils.sqlEscapeString(geocode));
             }
@@ -2419,11 +2399,12 @@ public class DataStore {
                 database.delete(dbTableCaches, baseWhereClause, null);
                 database.delete(dbTableAttributes, baseWhereClause, null);
                 database.delete(dbTableSpoilers, baseWhereClause, null);
+                database.delete(dbTableLogImages, "log_id IN (SELECT _id FROM " + dbTableLogs + " WHERE " + baseWhereClause + ")", null);
                 database.delete(dbTableLogs, baseWhereClause, null);
                 database.delete(dbTableLogCount, baseWhereClause, null);
                 database.delete(dbTableLogsOffline, baseWhereClause, null);
                 String wayPointClause = baseWhereClause;
-                if (!removeFlags.contains(RemoveFlag.REMOVE_OWN_WAYPOINTS_ONLY_FOR_TESTING)) {
+                if (!removeFlags.contains(RemoveFlag.OWN_WAYPOINTS_ONLY_FOR_TESTING)) {
                     wayPointClause += " and type <> 'own'";
                 }
                 database.delete(dbTableWaypoints, wayPointClause, null);
@@ -2440,7 +2421,7 @@ public class DataStore {
         }
     }
 
-    public static boolean saveLogOffline(String geocode, Date date, LogType type, String log) {
+    public static boolean saveLogOffline(final String geocode, final Date date, final LogType type, final String log) {
         if (StringUtils.isBlank(geocode)) {
             Log.e("DataStore.saveLogOffline: cannot log a blank geocode");
             return false;
@@ -2467,7 +2448,7 @@ public class DataStore {
         return id != -1;
     }
 
-    public static LogEntry loadLogOffline(String geocode) {
+    public static LogEntry loadLogOffline(final String geocode) {
         if (StringUtils.isBlank(geocode)) {
             return null;
         }
@@ -2498,7 +2479,7 @@ public class DataStore {
         return log;
     }
 
-    public static void clearLogOffline(String geocode) {
+    public static void clearLogOffline(final String geocode) {
         if (StringUtils.isBlank(geocode)) {
             return;
         }
@@ -2508,15 +2489,15 @@ public class DataStore {
         database.delete(dbTableLogsOffline, "geocode = ?", new String[]{geocode});
     }
 
-    public static void clearLogsOffline(List<Geocache> caches) {
+    public static void clearLogsOffline(final List<Geocache> caches) {
         if (CollectionUtils.isEmpty(caches)) {
             return;
         }
 
         init();
 
-        Set<String> geocodes = new HashSet<String>(caches.size());
-        for (Geocache cache : caches) {
+        final Set<String> geocodes = new HashSet<>(caches.size());
+        for (final Geocache cache : caches) {
             geocodes.add(cache.getGeocode());
             cache.setLogOffline(false);
         }
@@ -2536,14 +2517,14 @@ public class DataStore {
                 logCount.bindString(1, geocode);
                 return logCount.simpleQueryForLong() > 0;
             }
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.hasLogOffline", e);
         }
 
         return false;
     }
 
-    private static void setVisitDate(List<String> geocodes, long visitedDate) {
+    private static void setVisitDate(final List<String> geocodes, final long visitedDate) {
         if (geocodes.isEmpty()) {
             return;
         }
@@ -2552,9 +2533,9 @@ public class DataStore {
 
         database.beginTransaction();
         try {
-            SQLiteStatement setVisit = PreparedStatements.getUpdateVisitDate();
+            final SQLiteStatement setVisit = PreparedStatements.getUpdateVisitDate();
 
-            for (String geocode : geocodes) {
+            for (final String geocode : geocodes) {
                 setVisit.bindLong(1, visitedDate);
                 setVisit.bindString(2, geocode);
                 setVisit.execute();
@@ -2570,7 +2551,7 @@ public class DataStore {
         init();
 
         final Resources res = CgeoApplication.getInstance().getResources();
-        final List<StoredList> lists = new ArrayList<StoredList>();
+        final List<StoredList> lists = new ArrayList<>();
         lists.add(new StoredList(StoredList.STANDARD_LIST_ID, res.getString(R.string.list_inbox), (int) PreparedStatements.getCountCachesOnStandardList().simpleQueryForLong()));
 
         try {
@@ -2600,10 +2581,10 @@ public class DataStore {
         });
     }
 
-    public static StoredList getList(int id) {
+    public static StoredList getList(final int id) {
         init();
         if (id >= customListIdOffset) {
-            Cursor cursor = database.query(
+            final Cursor cursor = database.query(
                     dbTableLists,
                     new String[]{"_id", "title"},
                     "_id = ? ",
@@ -2611,13 +2592,13 @@ public class DataStore {
                     null,
                     null,
                     null);
-            ArrayList<StoredList> lists = getListsFromCursor(cursor);
+            final ArrayList<StoredList> lists = getListsFromCursor(cursor);
             if (!lists.isEmpty()) {
                 return lists.get(0);
             }
         }
 
-        Resources res = CgeoApplication.getInstance().getResources();
+        final Resources res = CgeoApplication.getInstance().getResources();
         if (id == PseudoList.ALL_LIST.id) {
             return new StoredList(PseudoList.ALL_LIST.id, res.getString(R.string.list_all_lists), getAllCachesCount());
         }
@@ -2641,7 +2622,7 @@ public class DataStore {
      *            Name
      * @return new listId
      */
-    public static int createList(String name) {
+    public static int createList(final String name) {
         int id = -1;
         if (StringUtils.isBlank(name)) {
             return id;
@@ -2651,7 +2632,7 @@ public class DataStore {
 
         database.beginTransaction();
         try {
-            ContentValues values = new ContentValues();
+            final ContentValues values = new ContentValues();
             values.put("title", name);
             values.put("updated", System.currentTimeMillis());
 
@@ -2681,7 +2662,7 @@ public class DataStore {
         database.beginTransaction();
         int count = 0;
         try {
-            ContentValues values = new ContentValues();
+            final ContentValues values = new ContentValues();
             values.put("title", name);
             values.put("updated", System.currentTimeMillis());
 
@@ -2700,7 +2681,7 @@ public class DataStore {
      * @param listId
      * @return true if the list got deleted, false else
      */
-    public static boolean removeList(int listId) {
+    public static boolean removeList(final int listId) {
         if (listId < customListIdOffset) {
             return false;
         }
@@ -2710,11 +2691,11 @@ public class DataStore {
         database.beginTransaction();
         boolean status = false;
         try {
-            int cnt = database.delete(dbTableLists, "_id = " + (listId - customListIdOffset), null);
+            final int cnt = database.delete(dbTableLists, "_id = " + (listId - customListIdOffset), null);
 
             if (cnt > 0) {
                 // move caches from deleted list to standard list
-                SQLiteStatement moveToStandard = PreparedStatements.getMoveToStandardList();
+                final SQLiteStatement moveToStandard = PreparedStatements.getMoveToStandardList();
                 moveToStandard.bindLong(1, listId);
                 moveToStandard.execute();
 
@@ -2746,11 +2727,11 @@ public class DataStore {
         }
         init();
 
-        SQLiteStatement move = PreparedStatements.getMoveToList();
+        final SQLiteStatement move = PreparedStatements.getMoveToList();
 
         database.beginTransaction();
         try {
-            for (Geocache cache : caches) {
+            for (final Geocache cache : caches) {
                 move.bindLong(1, listId);
                 move.bindString(2, cache.getGeocode());
                 move.execute();
@@ -2766,7 +2747,7 @@ public class DataStore {
         return database != null;
     }
 
-    public static boolean removeSearchedDestination(Destination destination) {
+    public static boolean removeSearchedDestination(final Destination destination) {
         if (destination == null) {
             return false;
         }
@@ -2777,7 +2758,7 @@ public class DataStore {
             database.delete(dbTableSearchDestionationHistory, "_id = " + destination.getId(), null);
             database.setTransactionSuccessful();
             return true;
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("Unable to remove searched destination", e);
         } finally {
             database.endTransaction();
@@ -2822,9 +2803,9 @@ public class DataStore {
             }
 
             cursor.close();
-        } catch (SQLiteDoneException e) {
+        } catch (final SQLiteDoneException ignored) {
             // Do nothing, it only means we have no information on the cache
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("DataStore.getCacheDescription", e);
         }
 
@@ -2853,7 +2834,7 @@ public class DataStore {
         final StringBuilder whereExpr = new StringBuilder("geocode in (");
         final Iterator<String> iterator = geocodes.iterator();
         while (true) {
-            whereExpr.append(DatabaseUtils.sqlEscapeString(StringUtils.upperCase(iterator.next())));
+            DatabaseUtils.appendEscapedSQLString(whereExpr, StringUtils.upperCase(iterator.next()));
             if (!iterator.hasNext()) {
                 break;
             }
@@ -2871,13 +2852,14 @@ public class DataStore {
      * @return
      */
 
-    public static Set<Waypoint> loadWaypoints(final Viewport viewport, boolean excludeMine, boolean excludeDisabled, CacheType type) {
+    public static Set<Waypoint> loadWaypoints(final Viewport viewport, final boolean excludeMine, final boolean excludeDisabled, final CacheType type) {
         final StringBuilder where = buildCoordinateWhere(dbTableWaypoints, viewport);
         if (excludeMine) {
             where.append(" and ").append(dbTableCaches).append(".found == 0");
         }
         if (excludeDisabled) {
             where.append(" and ").append(dbTableCaches).append(".disabled == 0");
+            where.append(" and ").append(dbTableCaches).append(".archived == 0");
         }
         if (type != CacheType.ALL) {
             where.append(" and ").append(dbTableCaches).append(".type == '").append(type.id).append('\'');
@@ -2887,7 +2869,9 @@ public class DataStore {
         for (int i = 0; i < WAYPOINT_COLUMNS.length; i++) {
             query.append(i > 0 ? ", " : "").append(dbTableWaypoints).append('.').append(WAYPOINT_COLUMNS[i]).append(' ');
         }
-        query.append(" FROM ").append(dbTableWaypoints).append(", ").append(dbTableCaches).append(" WHERE ").append(dbTableWaypoints).append(".geocode == ").append(dbTableCaches).append(".geocode and ").append(where);
+        query.append(" FROM ").append(dbTableWaypoints).append(", ").append(dbTableCaches).append(" WHERE ").append(dbTableWaypoints)
+                .append(".geocode == ").append(dbTableCaches).append(".geocode and ").append(where)
+                .append(" LIMIT " + (Settings.SHOW_WP_THRESHOLD_MAX * 2));  // Hardcoded limit to avoid memory overflow
 
         return cursorToColl(database.rawQuery(query.toString(), null), new HashSet<Waypoint>(), new Func1<Cursor, Waypoint>() {
             @Override
@@ -2897,13 +2881,13 @@ public class DataStore {
         });
     }
 
-    public static void saveChangedCache(Geocache cache) {
-        DataStore.saveCache(cache, cache.getStorageLocation().contains(StorageLocation.DATABASE) ? LoadFlags.SAVE_ALL : EnumSet.of(SaveFlag.SAVE_CACHE));
+    public static void saveChangedCache(final Geocache cache) {
+        DataStore.saveCache(cache, cache.getStorageLocation().contains(StorageLocation.DATABASE) ? LoadFlags.SAVE_ALL : EnumSet.of(SaveFlag.CACHE));
     }
 
     private static class PreparedStatements {
 
-        private static HashMap<String, SQLiteStatement> statements = new HashMap<String, SQLiteStatement>();
+        private static HashMap<String, SQLiteStatement> statements = new HashMap<>();
 
         public static SQLiteStatement getMoveToStandardList() {
             return getStatement("MoveToStandardList", "UPDATE " + dbTableCaches + " SET reason = " + StoredList.STANDARD_LIST_ID + " WHERE reason = ?");
@@ -2929,7 +2913,7 @@ public class DataStore {
             return getStatement("InsertSpoiler", "INSERT INTO " + dbTableSpoilers + " (geocode, updated, url, title, description) VALUES (?, ?, ?, ?, ?)");
         }
 
-        public static SQLiteStatement getInsertSearchDestination(Destination destination) {
+        public static SQLiteStatement getInsertSearchDestination(final Destination destination) {
             final SQLiteStatement statement = getStatement("InsertSearch", "INSERT INTO " + dbTableSearchDestionationHistory + " (date, latitude, longitude) VALUES (?, ?, ?)");
             statement.bindLong(1, destination.getDate());
             final Geopoint coords = destination.getCoords();
@@ -2939,7 +2923,7 @@ public class DataStore {
         }
 
         private static void clearPreparedStatements() {
-            for (SQLiteStatement statement : statements.values()) {
+            for (final SQLiteStatement statement : statements.values()) {
                 statement.close();
             }
             statements.clear();
@@ -2987,10 +2971,6 @@ public class DataStore {
             return getStatement("listFromGeocode", "SELECT reason FROM " + dbTableCaches + " WHERE guid = ?");
         }
 
-        private static SQLiteStatement getCacheIdOfGeocode() {
-            return getStatement("cacheIdFromGeocode", "SELECT cacheid FROM " + dbTableCaches + " WHERE geocode = ?");
-        }
-
         private static SQLiteStatement getGeocodeOfGuid() {
             return getStatement("geocodeFromGuid", "SELECT geocode FROM " + dbTableCaches + " WHERE guid = ?");
         }
@@ -3001,11 +2981,11 @@ public class DataStore {
         setVisitDate(Collections.singletonList(geocode), System.currentTimeMillis());
     }
 
-    public static void markDropped(List<Geocache> caches) {
-        moveToList(caches, StoredList.TEMPORARY_LIST_ID);
+    public static void markDropped(final List<Geocache> caches) {
+        moveToList(caches, StoredList.TEMPORARY_LIST.id);
     }
 
-    public static Viewport getBounds(String geocode) {
+    public static Viewport getBounds(final String geocode) {
         if (geocode == null) {
             return null;
         }
@@ -3013,23 +2993,23 @@ public class DataStore {
         return DataStore.getBounds(Collections.singleton(geocode));
     }
 
-    public static void clearVisitDate(String[] selected) {
+    public static void clearVisitDate(final String[] selected) {
         setVisitDate(Arrays.asList(selected), 0);
     }
 
-    public static SearchResult getBatchOfStoredCaches(Geopoint coords, CacheType cacheType, int listId) {
+    public static SearchResult getBatchOfStoredCaches(final Geopoint coords, final CacheType cacheType, final int listId) {
         final Set<String> geocodes = DataStore.loadBatchOfStoredGeocodes(coords, cacheType, listId);
         return new SearchResult(geocodes, DataStore.getAllStoredCachesCount(cacheType, listId));
     }
 
-    public static SearchResult getHistoryOfCaches(boolean detailedOnly, CacheType cacheType) {
+    public static SearchResult getHistoryOfCaches(final boolean detailedOnly, final CacheType cacheType) {
         final Set<String> geocodes = DataStore.loadBatchOfHistoricGeocodes(detailedOnly, cacheType);
         return new SearchResult(geocodes, DataStore.getAllHistoryCachesCount());
     }
 
-    public static boolean saveWaypoint(int id, String geocode, Waypoint waypoint) {
+    public static boolean saveWaypoint(final int id, final String geocode, final Waypoint waypoint) {
         if (DataStore.saveWaypointInternal(id, geocode, waypoint)) {
-            DataStore.removeCache(geocode, EnumSet.of(RemoveFlag.REMOVE_CACHE));
+            DataStore.removeCache(geocode, EnumSet.of(RemoveFlag.CACHE));
             return true;
         }
         return false;
@@ -3038,28 +3018,25 @@ public class DataStore {
     public static Set<String> getCachedMissingFromSearch(final SearchResult searchResult, final Set<Tile> tiles, final IConnector connector, final int maxZoom) {
 
         // get cached CacheListActivity
-        final Set<String> cachedGeocodes = new HashSet<String>();
-        for (Tile tile : tiles) {
+        final Set<String> cachedGeocodes = new HashSet<>();
+        for (final Tile tile : tiles) {
             cachedGeocodes.addAll(cacheCache.getInViewport(tile.getViewport(), CacheType.ALL));
         }
         // remove found in search result
         cachedGeocodes.removeAll(searchResult.getGeocodes());
 
         // check remaining against viewports
-        Set<String> missingFromSearch = new HashSet<String>();
-        for (String geocode : cachedGeocodes) {
+        final Set<String> missingFromSearch = new HashSet<>();
+        for (final String geocode : cachedGeocodes) {
             if (connector.canHandle(geocode)) {
-                Geocache geocache = cacheCache.getCacheFromCache(geocode);
-                if (geocache.getCoordZoomLevel() <= maxZoom) {
-                    boolean found = false;
-                    for (Tile tile : tiles) {
+                final Geocache geocache = cacheCache.getCacheFromCache(geocode);
+                // TODO: parallel searches seem to have the potential to make some caches be expunged from the CacheCache (see issue #3716).
+                if (geocache != null && geocache.getCoordZoomLevel() <= maxZoom) {
+                    for (final Tile tile : tiles) {
                         if (tile.containsPoint(geocache)) {
-                            found = true;
+                            missingFromSearch.add(geocode);
                             break;
                         }
-                    }
-                    if (found) {
-                        missingFromSearch.add(geocode);
                     }
                 }
             }
@@ -3074,13 +3051,7 @@ public class DataStore {
             return null;
         }
         init();
-        final MatrixCursor resultCursor = new MatrixCursor(new String[] {
-                BaseColumns._ID,
-                SearchManager.SUGGEST_COLUMN_TEXT_1,
-                SearchManager.SUGGEST_COLUMN_TEXT_2,
-                SearchManager.SUGGEST_COLUMN_INTENT_ACTION,
-                SearchManager.SUGGEST_COLUMN_QUERY
-        });
+        final SearchSuggestionCursor resultCursor = new SearchSuggestionCursor();
         try {
             final String selectionArg = getSuggestionArgument(searchTerm);
             findCaches(resultCursor, selectionArg);
@@ -3091,10 +3062,10 @@ public class DataStore {
         return resultCursor;
     }
 
-    private static void findCaches(final MatrixCursor resultCursor, final String selectionArg) {
-        Cursor cursor = database.query(
+    private static void findCaches(final SearchSuggestionCursor resultCursor, final String selectionArg) {
+        final Cursor cursor = database.query(
                 dbTableCaches,
-                new String[] { "geocode", "name" },
+                new String[] { "geocode", "name", "type" },
                 "geocode IS NOT NULL AND geocode != '' AND (geocode LIKE ? OR name LIKE ? OR owner LIKE ?)",
                 new String[] { selectionArg, selectionArg, selectionArg },
                 null,
@@ -3102,23 +3073,19 @@ public class DataStore {
                 "name");
         while (cursor.moveToNext()) {
             final String geocode = cursor.getString(0);
-            resultCursor.addRow(new String[] {
-                    String.valueOf(resultCursor.getCount()),
-                    cursor.getString(1),
-                    geocode,
-                    Intents.ACTION_GEOCACHE,
-                    geocode
-            });
+            final String cacheName = cursor.getString(1);
+            final String type = cursor.getString(2);
+            resultCursor.addCache(geocode, cacheName, type);
         }
         cursor.close();
     }
 
-    private static String getSuggestionArgument(String input) {
+    private static String getSuggestionArgument(final String input) {
         return "%" + StringUtils.trim(input) + "%";
     }
 
     private static void findTrackables(final MatrixCursor resultCursor, final String selectionArg) {
-        Cursor cursor = database.query(
+        final Cursor cursor = database.query(
                 dbTableTrackables,
                 new String[] { "tbcode", "title" },
                 "tbcode IS NOT NULL AND tbcode != '' AND (tbcode LIKE ? OR title LIKE ?)",
@@ -3133,38 +3100,66 @@ public class DataStore {
                     cursor.getString(1),
                     tbcode,
                     Intents.ACTION_TRACKABLE,
-                    tbcode
+                    tbcode,
+                    String.valueOf(R.drawable.trackable_all)
             });
         }
         cursor.close();
     }
 
     public static String[] getSuggestions(final String table, final String column, final String input) {
-        Cursor cursor = database.rawQuery("SELECT DISTINCT " + column
-                + " FROM " + table
-                + " WHERE " + column + " LIKE ?"
-                + " ORDER BY " + column + " COLLATE NOCASE ASC;", new String[] { getSuggestionArgument(input) });
-        return cursorToColl(cursor, new LinkedList<String>(), GET_STRING_0).toArray(new String[cursor.getCount()]);
+        try {
+            final Cursor cursor = database.rawQuery("SELECT DISTINCT " + column
+                    + " FROM " + table
+                    + " WHERE " + column + " LIKE ?"
+                    + " ORDER BY " + column + " COLLATE NOCASE ASC;", new String[] { getSuggestionArgument(input) });
+            return cursorToColl(cursor, new LinkedList<String>(), GET_STRING_0).toArray(new String[cursor.getCount()]);
+        } catch (final RuntimeException e) {
+            Log.e("cannot get suggestions from " + table + "->" + column + " for input '" + input + "'", e);
+            return new String[0];
+        }
     }
 
-    public static String[] getSuggestionsOwnerName(String input) {
-        return getSuggestions(dbTableCaches, "owner", input);
+    public static String[] getSuggestionsOwnerName(final String input) {
+        return getSuggestions(dbTableCaches, "owner_real", input);
     }
 
-    public static String[] getSuggestionsTrackableCode(String input) {
+    public static String[] getSuggestionsTrackableCode(final String input) {
         return getSuggestions(dbTableTrackables, "tbcode", input);
     }
 
-    public static String[] getSuggestionsFinderName(String input) {
+    public static String[] getSuggestionsFinderName(final String input) {
         return getSuggestions(dbTableLogs, "author", input);
     }
 
-    public static String[] getSuggestionsGeocode(String input) {
+    public static String[] getSuggestionsGeocode(final String input) {
         return getSuggestions(dbTableCaches, "geocode", input);
     }
 
-    public static String[] getSuggestionsKeyword(String input) {
+    public static String[] getSuggestionsKeyword(final String input) {
         return getSuggestions(dbTableCaches, "name", input);
+    }
+
+    /**
+     *
+     * @return list of last caches opened in the details view, ordered by most recent first
+     */
+    public static ArrayList<Geocache> getLastOpenedCaches() {
+        final List<String> geocodes = Settings.getLastOpenedCaches();
+        final Set<Geocache> cachesSet = DataStore.loadCaches(geocodes, LoadFlags.LOAD_CACHE_OR_DB);
+
+        // order result set by time again
+        final ArrayList<Geocache> caches = new ArrayList<>(cachesSet);
+        Collections.sort(caches, new Comparator<Geocache>() {
+
+            @Override
+            public int compare(final Geocache lhs, final Geocache rhs) {
+                final int lhsIndex = geocodes.indexOf(lhs.getGeocode());
+                final int rhsIndex = geocodes.indexOf(rhs.getGeocode());
+                return lhsIndex < rhsIndex ? -1 : (lhsIndex == rhsIndex ? 0 : 1);
+            }
+        });
+        return caches;
     }
 
 }

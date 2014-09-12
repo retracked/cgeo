@@ -1,12 +1,19 @@
 package cgeo.geocaching;
 
+import cgeo.geocaching.activity.ActivityMixin;
+import cgeo.geocaching.utils.FileUtils;
+import cgeo.geocaching.utils.Log;
+
 import org.apache.commons.lang3.StringUtils;
 
-import android.content.Context;
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Parcel;
 import android.os.Parcelable;
+
+import java.io.File;
 
 public class Image implements Parcelable {
     private final String url;
@@ -21,6 +28,10 @@ public class Image implements Parcelable {
 
     public Image(final String url, final String title) {
         this(url, title, null);
+    }
+
+    public Image(final File file) {
+        this("file://" + file.getAbsolutePath(), file.getName(), null);
     }
 
     public Image(final Parcel in) {
@@ -65,12 +76,17 @@ public class Image implements Parcelable {
         return description;
     }
 
-    public void openInBrowser(final Context fromActivity) {
+    public void openInBrowser(final Activity fromActivity) {
         if (StringUtils.isBlank(url)) {
             return;
         }
         final Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        fromActivity.startActivity(browserIntent);
+        try {
+            fromActivity.startActivity(browserIntent);
+        } catch (final ActivityNotFoundException e) {
+            Log.e("Cannot find suitable activity", e);
+            ActivityMixin.showToast(fromActivity, R.string.err_application_no);
+        }
     }
 
     @Override
@@ -84,5 +100,23 @@ public class Image implements Parcelable {
         }
 
         return "???";
+    }
+
+    /**
+     * Check if the URL represents a file on the local file system.
+     *
+     * @return <tt>true</tt> if the URL scheme is <tt>file</tt>, <tt>false</tt> otherwise
+     */
+    public boolean isLocalFile() {
+        return FileUtils.isFileUrl(url);
+    }
+
+    /**
+     * Local file name when {@link #isLocalFile()} is <tt>true</tt>.
+     *
+     * @return the local file
+     */
+    public File localFile() {
+        return FileUtils.urlToFile(url);
     }
 }

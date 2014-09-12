@@ -3,30 +3,43 @@ package cgeo.geocaching.activity;
 import butterknife.ButterKnife;
 
 import cgeo.geocaching.CgeoApplication;
+import cgeo.geocaching.Geocache;
 import cgeo.geocaching.R;
-import cgeo.geocaching.compatibility.Compatibility;
+import cgeo.geocaching.enumerations.CacheType;
 import cgeo.geocaching.network.Cookies;
 import cgeo.geocaching.settings.Settings;
 import cgeo.geocaching.utils.ClipboardUtils;
+import cgeo.geocaching.utils.EditUtils;
 import cgeo.geocaching.utils.HtmlUtils;
 import cgeo.geocaching.utils.TranslationUtils;
 
 import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.jdt.annotation.Nullable;
 
-import android.content.Intent;
-import android.content.res.Resources;
-import android.os.Bundle;
-import android.support.v4.app.FragmentActivity;
-import android.view.ContextMenu;
-import android.view.MenuItem;
-import android.view.View;
-import android.widget.EditText;
 import rx.Subscription;
 import rx.subscriptions.Subscriptions;
 
+import android.annotation.TargetApi;
+import android.content.Intent;
+import android.content.res.Resources;
+import android.nfc.NdefMessage;
+import android.nfc.NdefRecord;
+import android.nfc.NfcAdapter;
+import android.nfc.NfcEvent;
+import android.os.Build;
+import android.os.Bundle;
+import android.support.v7.app.ActionBarActivity;
+import android.support.v7.view.ActionMode;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.Window;
+import android.widget.EditText;
+
 import java.util.Locale;
 
-public abstract class AbstractActivity extends FragmentActivity implements IAbstractActivity {
+public abstract class AbstractActivity extends ActionBarActivity implements IAbstractActivity {
 
     protected CgeoApplication app = null;
     protected Resources res = null;
@@ -41,15 +54,6 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
         this.keepScreenOn = keepScreenOn;
     }
 
-    @Override
-    final public void goHome(final View view) {
-        ActivityMixin.goHome(this);
-    }
-
-    final protected void setTitle(final String title) {
-        ActivityMixin.setTitle(this, title);
-    }
-
     final protected void showProgress(final boolean show) {
         ActivityMixin.showProgress(this, show);
     }
@@ -59,24 +63,45 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
     }
 
     @Override
-    public final void showToast(String text) {
+    public final void showToast(final String text) {
         ActivityMixin.showToast(this, text);
     }
 
     @Override
-    public final void showShortToast(String text) {
+    public final void showShortToast(final String text) {
         ActivityMixin.showShortToast(this, text);
     }
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        supportRequestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
+
         initializeCommonFields();
     }
 
-    public void onResume(final Subscription resumeSubscription) {
+    @Override
+    public final void presentShowcase() {
+        ActivityMixin.presentShowcase(this);
+    }
+
+    @Override
+    public ShowcaseViewBuilder getShowcase() {
+        // do nothing by default
+        return null;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(final MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            return ActivityMixin.navigateUp(this);
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    public void onResume(final Subscription... resumeSubscriptions) {
         super.onResume();
-        this.resumeSubscription = resumeSubscription;
+        this.resumeSubscription = Subscriptions.from(resumeSubscriptions);
     }
 
     @Override
@@ -86,11 +111,16 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
     }
 
     protected static void disableSuggestions(final EditText edit) {
-        Compatibility.disableSuggestions(edit);
+        EditUtils.disableSuggestions(edit);
     }
 
     protected void restartActivity() {
-        Compatibility.restartActivity(this);
+        final Intent intent = getIntent();
+        overridePendingTransition(0, 0);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        finish();
+        overridePendingTransition(0, 0);
+        startActivity(intent);
     }
 
     @Override
@@ -99,21 +129,13 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
     }
 
     protected void onCreate(final Bundle savedInstanceState, final int resourceLayoutID) {
-        onCreate(savedInstanceState, resourceLayoutID, false);
-    }
-
-    protected void onCreate(final Bundle savedInstanceState, final int resourceLayoutID, boolean useDialogTheme) {
-
         super.onCreate(savedInstanceState);
 
         initializeCommonFields();
 
         // non declarative part of layout
-        if (useDialogTheme) {
-            setTheme(ActivityMixin.getDialogTheme());
-        } else {
-            setTheme();
-        }
+        setTheme();
+
         setContentView(resourceLayoutID);
 
         // create view variables
@@ -127,11 +149,11 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
 
         // only needed in some activities, but implemented in super class nonetheless
         Cookies.restoreCookieStore(Settings.getCookieStore());
-        ActivityMixin.keepScreenOn(this, keepScreenOn);
+        ActivityMixin.onCreate(this, keepScreenOn);
     }
 
     @Override
-    public void setContentView(int layoutResID) {
+    public void setContentView(final int layoutResID) {
         super.setContentView(layoutResID);
 
         // initialize the action bar title with the activity title for single source
@@ -146,9 +168,8 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
         new Keyboard(this).show(view);
     }
 
-    protected void buildDetailsContextMenu(final ContextMenu menu, final CharSequence clickedItemText, final String fieldTitle, final boolean copyOnly) {
-        menu.setHeaderTitle(fieldTitle);
-        getMenuInflater().inflate(R.menu.details_context, menu);
+    protected void buildDetailsContextMenu(final ActionMode actionMode, final Menu menu, final CharSequence clickedItemText, final CharSequence fieldTitle, final boolean copyOnly) {
+        actionMode.setTitle(fieldTitle);
         menu.findItem(R.id.menu_translate_to_sys_lang).setVisible(!copyOnly);
         if (!copyOnly) {
             if (clickedItemText.length() > TranslationUtils.TRANSLATION_TEXT_LENGTH_WARN) {
@@ -160,27 +181,80 @@ public abstract class AbstractActivity extends FragmentActivity implements IAbst
         menu.findItem(R.id.menu_translate_to_english).setVisible(!copyOnly && !localeIsEnglish);
     }
 
-    protected boolean onClipboardItemSelected(final MenuItem item, final CharSequence clickedItemText) {
+    protected boolean onClipboardItemSelected(@NonNull final ActionMode actionMode, final MenuItem item, final CharSequence clickedItemText) {
         switch (item.getItemId()) {
             // detail fields
             case R.id.menu_copy:
                 ClipboardUtils.copyToClipboard(clickedItemText);
                 showToast(res.getString(R.string.clipboard_copy_ok));
+                actionMode.finish();
                 return true;
             case R.id.menu_translate_to_sys_lang:
                 TranslationUtils.startActivityTranslate(this, Locale.getDefault().getLanguage(), HtmlUtils.extractText(clickedItemText));
+                actionMode.finish();
                 return true;
             case R.id.menu_translate_to_english:
                 TranslationUtils.startActivityTranslate(this, Locale.ENGLISH.getLanguage(), HtmlUtils.extractText(clickedItemText));
+                actionMode.finish();
                 return true;
             case R.id.menu_cache_share_field:
                 final Intent intent = new Intent(Intent.ACTION_SEND);
                 intent.setType("text/plain");
                 intent.putExtra(Intent.EXTRA_TEXT, clickedItemText.toString());
                 startActivity(Intent.createChooser(intent, res.getText(R.string.cache_share_field)));
+                actionMode.finish();
                 return true;
             default:
                 return false;
         }
     }
+
+    // Do not support older devices than Android 4.0
+    // Although there even are 2.3 devices  (Nexus S)
+    // these are so few that we don't want to deal with the older (non Android Beam) API
+
+    public interface ActivitySharingInterface {
+        /** Return an URL that represent the current activity for sharing or null for no sharing. */
+        public String getAndroidBeamUri();
+    }
+
+    protected void initializeAndroidBeam(final ActivitySharingInterface sharingInterface) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+            initializeICSAndroidBeam(sharingInterface);
+        }
+    }
+
+    @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
+    protected void initializeICSAndroidBeam(final ActivitySharingInterface sharingInterface) {
+        final NfcAdapter nfcAdapter = NfcAdapter.getDefaultAdapter(this);
+        if (nfcAdapter == null) {
+            return;
+        }
+        nfcAdapter.setNdefPushMessageCallback(new NfcAdapter.CreateNdefMessageCallback() {
+            @Override
+            public NdefMessage createNdefMessage(final NfcEvent event) {
+                final String uri = sharingInterface.getAndroidBeamUri();
+                return uri != null ? new NdefMessage(new NdefRecord[]{NdefRecord.createUri(uri)}) : null;
+            }
+        }, this);
+
+    }
+
+    protected void setCacheTitleBar(@Nullable final String geocode, @Nullable final String name, @Nullable final CacheType type) {
+        if (StringUtils.isNotBlank(name)) {
+            setTitle(StringUtils.isNotBlank(geocode) ? name + " (" + geocode + ")" : name);
+        } else {
+            setTitle(StringUtils.isNotBlank(geocode) ? geocode : res.getString(R.string.cache));
+        }
+        if (type != null) {
+            getSupportActionBar().setIcon(getResources().getDrawable(type.markerId));
+        } else {
+            getSupportActionBar().setIcon(android.R.color.transparent);
+        }
+    }
+
+    protected void setCacheTitleBar(final @NonNull Geocache cache) {
+        setCacheTitleBar(cache.getGeocode(), cache.getName(), cache.getType());
+    }
+
 }

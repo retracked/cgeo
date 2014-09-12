@@ -2,8 +2,10 @@ package cgeo.geocaching.network;
 
 import butterknife.InjectView;
 
+import cgeo.geocaching.Intents;
 import cgeo.geocaching.R;
 import cgeo.geocaching.activity.AbstractActivity;
+import cgeo.geocaching.utils.BundleUtils;
 import cgeo.geocaching.utils.Log;
 import cgeo.geocaching.utils.MatcherWrapper;
 
@@ -38,28 +40,29 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
     private static final int STATUS_ERROR = 0;
     private static final int STATUS_SUCCESS = 1;
     private static final int STATUS_ERROR_EXT_MSG = 2;
+    private static final Pattern PARAMS_PATTERN_1 = Pattern.compile("oauth_token=([\\w_.-]+)");
+    private static final Pattern PARAMS_PATTERN_2 = Pattern.compile("oauth_token_secret=([\\w_.-]+)");
 
-    @NonNull final private String host;
-    @NonNull final private String pathRequest;
-    @NonNull final private String pathAuthorize;
-    @NonNull final private String pathAccess;
-    private final boolean https;
-    @NonNull final private String consumerKey;
-    @NonNull final private String consumerSecret;
-    @NonNull final private String callback;
+    @NonNull private String host = StringUtils.EMPTY;
+    @NonNull private String pathRequest = StringUtils.EMPTY;
+    @NonNull private String pathAuthorize = StringUtils.EMPTY;
+    @NonNull private String pathAccess = StringUtils.EMPTY;
+    private boolean https = false;
+    @NonNull private String consumerKey = StringUtils.EMPTY;
+    @NonNull private String consumerSecret = StringUtils.EMPTY;
+    @NonNull private String callback = StringUtils.EMPTY;
     private String OAtoken = null;
     private String OAtokenSecret = null;
-    private final Pattern paramsPattern1 = Pattern.compile("oauth_token=([a-zA-Z0-9\\-\\_.]+)");
-    private final Pattern paramsPattern2 = Pattern.compile("oauth_token_secret=([a-zA-Z0-9\\-\\_.]+)");
     @InjectView(R.id.start) protected Button startButton;
     @InjectView(R.id.auth_1) protected TextView auth_1;
     @InjectView(R.id.auth_2) protected TextView auth_2;
     private ProgressDialog requestTokenDialog = null;
     private ProgressDialog changeTokensDialog = null;
-    private Handler requestTokenHandler = new Handler() {
+
+    private final Handler requestTokenHandler = new Handler() {
 
         @Override
-        public void handleMessage(Message msg) {
+        public void handleMessage(final Message msg) {
             if (requestTokenDialog != null && requestTokenDialog.isShowing()) {
                 requestTokenDialog.dismiss();
             }
@@ -81,10 +84,11 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
         }
 
     };
-    private Handler changeTokensHandler = new Handler() {
+
+    private final Handler changeTokensHandler = new Handler() {
 
         @Override
-        public void handleMessage(Message msg) {
+        public void handleMessage(final Message msg) {
             if (changeTokensDialog != null && changeTokensDialog.isShowing()) {
                 changeTokensDialog.dismiss();
             }
@@ -100,35 +104,28 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
         }
     };
 
-    public OAuthAuthorizationActivity
-            (@NonNull String host,
-             @NonNull String pathRequest,
-             @NonNull String pathAuthorize,
-             @NonNull String pathAccess,
-             boolean https,
-             @NonNull String consumerKey,
-             @NonNull String consumerSecret,
-             @NonNull String callback) {
-        this.host = host;
-        this.pathRequest = pathRequest;
-        this.pathAuthorize = pathAuthorize;
-        this.pathAccess = pathAccess;
-        this.https = https;
-        this.consumerKey = consumerKey;
-        this.consumerSecret = consumerSecret;
-        this.callback = callback;
-    }
-
     @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState, R.layout.authorization_activity, true);
+    public void onCreate(final Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState, R.layout.authorization_activity);
+
+        final Bundle extras = getIntent().getExtras();
+        if (extras != null) {
+            host = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_HOST, host);
+            pathRequest = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_PATH_REQUEST, pathRequest);
+            pathAuthorize = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_PATH_AUTHORIZE, pathAuthorize);
+            pathAccess = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_PATH_ACCESS, pathAccess);
+            https = extras.getBoolean(Intents.EXTRA_OAUTH_HTTPS, https);
+            consumerKey = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_CONSUMER_KEY, consumerKey);
+            consumerSecret = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_CONSUMER_SECRET, consumerSecret);
+            callback = BundleUtils.getString(extras, Intents.EXTRA_OAUTH_CALLBACK, callback);
+        }
 
         setTitle(getAuthTitle());
 
         auth_1.setText(getAuthExplainShort());
         auth_2.setText(getAuthExplainLong());
 
-        ImmutablePair<String, String> tempToken = getTempTokens();
+        final ImmutablePair<String, String> tempToken = getTempTokens();
         OAtoken = tempToken.left;
         OAtokenSecret = tempToken.right;
 
@@ -170,7 +167,7 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
         final Parameters params = new Parameters();
         params.put("oauth_callback", callback);
         final String method = "GET";
-        OAuth.signOAuth(host, pathRequest, method, https, params, null, null, consumerKey, consumerSecret);
+        OAuth.signOAuth(host, pathRequest, method, https, params, new OAuthTokens(null, null), consumerKey, consumerSecret);
         final HttpResponse response = Network.getRequest(getUrlPrefix() + host + pathRequest, params);
 
         if (Network.isSuccess(response)) {
@@ -179,11 +176,11 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
             int status = STATUS_ERROR;
             if (StringUtils.isNotBlank(line)) {
                 assert line != null;
-                final MatcherWrapper paramsMatcher1 = new MatcherWrapper(paramsPattern1, line);
+                final MatcherWrapper paramsMatcher1 = new MatcherWrapper(PARAMS_PATTERN_1, line);
                 if (paramsMatcher1.find()) {
                     OAtoken = paramsMatcher1.group(1);
                 }
-                final MatcherWrapper paramsMatcher2 = new MatcherWrapper(paramsPattern2, line);
+                final MatcherWrapper paramsMatcher2 = new MatcherWrapper(PARAMS_PATTERN_2, line);
                 if (paramsMatcher2.find()) {
                     OAtokenSecret = paramsMatcher2.group(1);
                 }
@@ -196,9 +193,7 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
                         final String encodedParams = EntityUtils.toString(new UrlEncodedFormEntity(paramsBrowser));
                         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(getUrlPrefix() + host + pathAuthorize + "?" + encodedParams)));
                         status = STATUS_SUCCESS;
-                    } catch (ParseException e) {
-                        Log.e("OAuthAuthorizationActivity.requestToken", e);
-                    } catch (IOException e) {
+                    } catch (ParseException | IOException e) {
                         Log.e("OAuthAuthorizationActivity.requestToken", e);
                     }
                 }
@@ -224,17 +219,17 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
             final Parameters params = new Parameters("oauth_verifier", verifier);
 
             final String method = "POST";
-            OAuth.signOAuth(host, pathAccess, method, https, params, OAtoken, OAtokenSecret, consumerKey, consumerSecret);
+            OAuth.signOAuth(host, pathAccess, method, https, params, new OAuthTokens(OAtoken, OAtokenSecret), consumerKey, consumerSecret);
             final String line = StringUtils.defaultString(Network.getResponseData(Network.postRequest(getUrlPrefix() + host + pathAccess, params)));
 
             OAtoken = "";
             OAtokenSecret = "";
 
-            final MatcherWrapper paramsMatcher1 = new MatcherWrapper(paramsPattern1, line);
+            final MatcherWrapper paramsMatcher1 = new MatcherWrapper(PARAMS_PATTERN_1, line);
             if (paramsMatcher1.find()) {
                 OAtoken = paramsMatcher1.group(1);
             }
-            final MatcherWrapper paramsMatcher2 = new MatcherWrapper(paramsPattern2, line);
+            final MatcherWrapper paramsMatcher2 = new MatcherWrapper(PARAMS_PATTERN_2, line);
             if (paramsMatcher2.find() && paramsMatcher2.groupCount() > 0) {
                 OAtokenSecret = paramsMatcher2.group(1);
             }
@@ -247,7 +242,7 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
                 setTokens(OAtoken, OAtokenSecret, true);
                 status = AUTHENTICATED;
             }
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Log.e("OAuthAuthorizationActivity.changeToken", e);
         }
 
@@ -261,7 +256,7 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
     private class StartListener implements View.OnClickListener {
 
         @Override
-        public void onClick(View arg0) {
+        public void onClick(final View arg0) {
             if (requestTokenDialog == null) {
                 requestTokenDialog = new ProgressDialog(OAuthAuthorizationActivity.this);
                 requestTokenDialog.setCancelable(false);
@@ -336,7 +331,7 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
      * @return String with a more detailed error message (user-facing, localized), can be empty
      */
     @SuppressWarnings("static-method")
-    protected String getExtendedErrorMsg(HttpResponse response) {
+    protected String getExtendedErrorMsg(final HttpResponse response) {
         return StringUtils.EMPTY;
     }
 
@@ -354,5 +349,48 @@ public abstract class OAuthAuthorizationActivity extends AbstractActivity {
 
     protected String getAuthAuthorize() {
         return res.getString(R.string.auth_authorize, getAuthTitle());
+    }
+
+    public static class OAuthParameters {
+        @NonNull public final String host;
+        @NonNull public final String pathRequest;
+        @NonNull public final String pathAuthorize;
+        @NonNull public final String pathAccess;
+        public final boolean https;
+        @NonNull public final String consumerKey;
+        @NonNull public final String consumerSecret;
+        @NonNull public final String callback;
+
+        public OAuthParameters(@NonNull final String host,
+                @NonNull final String pathRequest,
+                @NonNull final String pathAuthorize,
+                @NonNull final String pathAccess,
+                final boolean https,
+                @NonNull final String consumerKey,
+                @NonNull final String consumerSecret,
+                @NonNull final String callback) {
+            this.host = host;
+            this.pathRequest = pathRequest;
+            this.pathAuthorize = pathAuthorize;
+            this.pathAccess = pathAccess;
+            this.https = https;
+            this.consumerKey = consumerKey;
+            this.consumerSecret = consumerSecret;
+            this.callback = callback;
+        }
+
+        public void setOAuthExtras(final Intent intent) {
+            if (intent != null) {
+                intent.putExtra(Intents.EXTRA_OAUTH_HOST, host);
+                intent.putExtra(Intents.EXTRA_OAUTH_PATH_REQUEST, pathRequest);
+                intent.putExtra(Intents.EXTRA_OAUTH_PATH_AUTHORIZE, pathAuthorize);
+                intent.putExtra(Intents.EXTRA_OAUTH_PATH_ACCESS, pathAccess);
+                intent.putExtra(Intents.EXTRA_OAUTH_HTTPS, https);
+                intent.putExtra(Intents.EXTRA_OAUTH_CONSUMER_KEY, consumerKey);
+                intent.putExtra(Intents.EXTRA_OAUTH_CONSUMER_SECRET, consumerSecret);
+                intent.putExtra(Intents.EXTRA_OAUTH_CALLBACK, callback);
+            }
+        }
+
     }
 }

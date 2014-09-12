@@ -23,6 +23,8 @@ import java.util.List;
  */
 public final class FileUtils {
 
+    private static final String FILE_PROTOCOL = "file://";
+
     private FileUtils() {
         // utility class
     }
@@ -152,5 +154,33 @@ public final class FileUtils {
             IOUtils.closeQuietly(buffer);
         }
         return true;
+    }
+
+    /**
+     * Check if the URL represents a file on the local file system.
+     *
+     * @return <tt>true</tt> if the URL scheme is <tt>file</tt>, <tt>false</tt> otherwise
+     */
+    public static boolean isFileUrl(final String url) {
+        return StringUtils.startsWith(url, FILE_PROTOCOL);
+    }
+
+    /**
+     * Build an URL from a file name.
+     *
+     * @param file a local file name
+     * @return an URL with the <tt>file</tt> scheme
+     */
+    public static String fileToUrl(final File file) {
+        return FILE_PROTOCOL + file.getAbsolutePath();
+    }
+
+    /**
+     * Local file name when {@link #isFileUrl(String)} is <tt>true</tt>.
+     * 
+     * @return the local file
+     */
+    public static File urlToFile(final String url) {
+        return new File(StringUtils.substring(url, FILE_PROTOCOL.length()));
     }
 }

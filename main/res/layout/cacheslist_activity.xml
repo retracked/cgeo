@@ -1,17 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="fill_parent"
     android:layout_height="fill_parent"
-    android:orientation="vertical" >
-
-    <LinearLayout style="@style/action_bar" >
-
-        <include layout="@layout/actionbar_title" />
-
-        <include layout="@layout/actionbar_progress" />
-
-        <include layout="@layout/actionbar_button_map" />
-    </LinearLayout>
+    android:orientation="vertical"
+    tools:context=".CacheListActivity" >
 
     <include layout="@layout/filter_bar" />
 
@@ -37,9 +30,12 @@
         android:layout_margin="0dip"
         android:background="?background_color"
         android:cacheColorHint="?background_color"
+        android:clipToPadding="false"
         android:dividerHeight="1dip"
+        android:fastScrollEnabled="true"
         android:padding="0dip"
+        android:scrollbarStyle="outsideOverlay"
         android:visibility="gone"
-        android:fastScrollEnabled="true" />
+        tools:listitem="@layout/cacheslist_item" />
 
 </LinearLayout>

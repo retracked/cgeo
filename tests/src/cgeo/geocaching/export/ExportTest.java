@@ -1,5 +1,7 @@
 package cgeo.geocaching.export;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import cgeo.CGeoTestCase;
 import cgeo.geocaching.DataStore;
 import cgeo.geocaching.Geocache;
@@ -11,6 +13,7 @@ import cgeo.geocaching.utils.FileUtils;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
@@ -30,8 +33,8 @@ public class ExportTest extends CGeoTestCase {
         cache.setGeocode("GCX1234");
         cache.setCoords(new Geopoint("N 49 44.000 E 8 37.000"));
         final LogEntry log = new LogEntry(1353244820000L, LogType.FOUND_IT, "Smile: \ud83d\ude0a");
-        cache.getLogs().add(log);
         DataStore.saveCache(cache, LoadFlags.SAVE_ALL);
+        DataStore.saveLogsWithoutTransaction(cache.getGeocode(), Collections.singletonList(log));
         ArrayList<Geocache> exportList = new ArrayList<Geocache>();
         exportList.add(cache);
         GpxExportTester gpxExport = new GpxExportTester();
@@ -42,16 +45,12 @@ public class ExportTest extends CGeoTestCase {
             DataStore.removeCache(cache.getGeocode(), LoadFlags.REMOVE_ALL);
         }
 
-        assertNotNull(result);
+        assertThat(result).isNotNull();
 
         FileUtils.deleteIgnoringFailure(result);
     }
 
     private static class GpxExportTester extends GpxExport {
-
-        protected GpxExportTester() {
-            super();
-        }
 
         public File testExportSync(List<Geocache> caches) throws InterruptedException, ExecutionException {
             final ArrayList<String> geocodes = new ArrayList<String>(caches.size());

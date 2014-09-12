@@ -1,5 +1,7 @@
 package cgeo.geocaching.ui;
 
+import butterknife.ButterKnife;
+
 import cgeo.geocaching.Image;
 import cgeo.geocaching.R;
 import cgeo.geocaching.files.LocalStorage;
@@ -9,6 +11,7 @@ import cgeo.geocaching.utils.Log;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
+
 import rx.Subscription;
 import rx.android.observables.AndroidObservable;
 import rx.functions.Action0;
@@ -30,12 +33,14 @@ import android.view.ContextMenu;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.webkit.MimeTypeMap;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.util.Collection;
 import java.util.LinkedList;
@@ -63,11 +68,11 @@ public class ImagesList {
     private LayoutInflater inflater = null;
     private final Activity activity;
     // We could use a Set here, but we will insert no duplicates, so there is no need to check for uniqueness.
-    private final Collection<Bitmap> bitmaps = new LinkedList<Bitmap>();
+    private final Collection<Bitmap> bitmaps = new LinkedList<>();
     /**
      * map image view id to image
      */
-    private final SparseArray<Image> images = new SparseArray<Image>();
+    private final SparseArray<Image> images = new SparseArray<>();
     private final String geocode;
     private LinearLayout imagesView;
 
@@ -95,34 +100,34 @@ public class ImagesList {
             }
         }));
 
-        imagesView = (LinearLayout) parentView.findViewById(R.id.spoiler_list);
+        imagesView = ButterKnife.findById(parentView, R.id.spoiler_list);
 
-        final HtmlImage imgGetter = new HtmlImage(geocode, true, offline ? StoredList.STANDARD_LIST_ID : StoredList.TEMPORARY_LIST_ID, false);
+        final HtmlImage imgGetter = new HtmlImage(geocode, true, offline ? StoredList.STANDARD_LIST_ID : StoredList.TEMPORARY_LIST.id, false);
 
         for (final Image img : images) {
-            final LinearLayout rowView = (LinearLayout) inflater.inflate(R.layout.cache_image_item, null);
+            final LinearLayout rowView = (LinearLayout) inflater.inflate(R.layout.cache_image_item, imagesView, false);
             assert(rowView != null);
 
             if (StringUtils.isNotBlank(img.getTitle())) {
-                ((TextView) rowView.findViewById(R.id.title)).setText(Html.fromHtml(img.getTitle()));
+                final TextView titleView = ButterKnife.findById(rowView, R.id.title);
+                titleView.setText(Html.fromHtml(img.getTitle()));
                 rowView.findViewById(R.id.titleLayout).setVisibility(View.VISIBLE);
             }
 
             if (StringUtils.isNotBlank(img.getDescription())) {
-                final TextView descView = (TextView) rowView.findViewById(R.id.description);
+                final TextView descView = ButterKnife.findById(rowView, R.id.description);
                 descView.setText(Html.fromHtml(img.getDescription()), TextView.BufferType.SPANNABLE);
                 descView.setVisibility(View.VISIBLE);
             }
 
-            final ImageView imageView = (ImageView) inflater.inflate(R.layout.image_item, null);
+            final ImageView imageView = (ImageView) inflater.inflate(R.layout.image_item, rowView, false);
             assert(imageView != null);
-            subscriptions.add(AndroidObservable.fromActivity(activity, imgGetter.fetchDrawable(img.getUrl()))
-                    .subscribe(new Action1<BitmapDrawable>() {
-                        @Override
-                        public void call(final BitmapDrawable image) {
-                            display(imageView, image, img, rowView);
-                        }
-                    }));
+            subscriptions.add(AndroidObservable.bindActivity(activity, imgGetter.fetchDrawable(img.getUrl())).subscribe(new Action1<BitmapDrawable>() {
+                @Override
+                public void call(final BitmapDrawable image) {
+                    display(imageView, image, img, rowView);
+                }
+            }));
             rowView.addView(imageView);
             imagesView.addView(rowView);
         }
@@ -140,8 +145,8 @@ public class ImagesList {
             imageView.setClickable(true);
             imageView.setOnClickListener(new View.OnClickListener() {
                 @Override
-                public void onClick(View arg0) {
-                    viewImageInStandardApp(image);
+                public void onClick(final View arg0) {
+                    viewImageInStandardApp(img, image);
                 }
             });
             activity.registerForContextMenu(imageView);
@@ -168,7 +173,7 @@ public class ImagesList {
         imagesView.removeAllViews();
     }
 
-    public void onCreateContextMenu(ContextMenu menu, View v) {
+    public void onCreateContextMenu(final ContextMenu menu, final View v) {
         assert v instanceof ImageView;
         activity.getMenuInflater().inflate(R.menu.images_list_context, menu);
         final Resources res = activity.getResources();
@@ -178,10 +183,10 @@ public class ImagesList {
         currentImage = images.get(view.getId());
     }
 
-    public boolean onContextItemSelected(MenuItem item) {
+    public boolean onContextItemSelected(final MenuItem item) {
         switch (item.getItemId()) {
             case R.id.image_open_file:
-                viewImageInStandardApp(currentDrawable);
+                viewImageInStandardApp(currentImage, currentDrawable);
                 return true;
             case R.id.image_open_browser:
                 if (currentImage != null) {
@@ -193,26 +198,35 @@ public class ImagesList {
         }
     }
 
-    private void viewImageInStandardApp(final BitmapDrawable image) {
+    private static String mimeTypeForUrl(final String url) {
+        return StringUtils.defaultString(MimeTypeMap.getSingleton().getMimeTypeFromExtension(MimeTypeMap.getFileExtensionFromUrl(url)), "image/*");
+    }
+
+    private static File saveToTemporaryJPGFile(final BitmapDrawable image) throws FileNotFoundException {
         final File file = LocalStorage.getStorageFile(null, "temp.jpg", false, true);
         BufferedOutputStream stream = null;
         try {
             stream = new BufferedOutputStream(new FileOutputStream(file));
             image.getBitmap().compress(CompressFormat.JPEG, 100, stream);
-        } catch (Exception e) {
-            Log.e("ImagesList.viewImageInStandardApp", e);
-            return;
         } finally {
             IOUtils.closeQuietly(stream);
         }
+        file.deleteOnExit();
+        return file;
+    }
 
-        final Intent intent = new Intent();
-        intent.setAction(android.content.Intent.ACTION_VIEW);
-        intent.setDataAndType(Uri.fromFile(file), "image/jpeg");
-        activity.startActivity(intent);
-
-        if (file.exists()) {
-            file.deleteOnExit();
+    private void viewImageInStandardApp(final Image img, final BitmapDrawable image) {
+        try {
+            final Intent intent = new Intent().setAction(android.content.Intent.ACTION_VIEW);
+            final File file = img.isLocalFile() ? img.localFile() : LocalStorage.getStorageFile(geocode, img.getUrl(), true, true);
+            if (file.exists()) {
+                intent.setDataAndType(Uri.fromFile(file), mimeTypeForUrl(img.getUrl()));
+            } else {
+                intent.setDataAndType(Uri.fromFile(saveToTemporaryJPGFile(image)), "image/jpeg");
+            }
+            activity.startActivity(intent);
+        } catch (final Exception e) {
+            Log.e("ImagesList.viewImageInStandardApp", e);
         }
     }
 

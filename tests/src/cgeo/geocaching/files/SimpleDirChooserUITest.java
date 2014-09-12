@@ -1,8 +1,13 @@
 package cgeo.geocaching.files;
 
-import com.jayway.android.robotium.solo.Solo;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import cgeo.geocaching.Intents;
+
+import com.robotium.solo.Solo;
 
 import android.annotation.TargetApi;
+import android.content.Intent;
 import android.os.Build;
 import android.test.ActivityInstrumentationTestCase2;
 import android.test.suitebuilder.annotation.Suppress;
@@ -11,8 +16,7 @@ import android.widget.CheckBox;
 import java.util.ArrayList;
 
 @TargetApi(Build.VERSION_CODES.FROYO)
-@Suppress()
-/* This test breaks the continuous integration server, do not run it for now. */
+@Suppress
 public class SimpleDirChooserUITest extends ActivityInstrumentationTestCase2<SimpleDirChooser> {
 
     private Solo solo;
@@ -24,7 +28,12 @@ public class SimpleDirChooserUITest extends ActivityInstrumentationTestCase2<Sim
     @Override
     public void setUp() throws Exception {
         super.setUp();
+        setActivityIntent(new Intent().putExtra(Intents.EXTRA_START_DIR, "").putExtra(SimpleDirChooser.EXTRA_CHOOSE_FOR_WRITING, false));
         solo = new Solo(getInstrumentation(), getActivity());
+    }
+
+    public ArrayList<CheckBox> getCurrentCheckBoxes() {
+        return solo.getCurrentViews(CheckBox.class);
     }
 
     public void testSingleSelection() throws InterruptedException {
@@ -37,11 +46,11 @@ public class SimpleDirChooserUITest extends ActivityInstrumentationTestCase2<Sim
         // according to the documentation, automatic pauses only happen in the clickXYZ() methods.
         // Therefore lets introduce a manual pause after the scrolling methods.
 
-        final int lastIndex = solo.getCurrentCheckBoxes().size() - 1;
+        final int lastIndex = getCurrentCheckBoxes().size() - 1;
 
         solo.clickOnCheckBox(lastIndex);
-        assertTrue(solo.getCurrentCheckBoxes().get(lastIndex).isChecked());
-        assertFalse(solo.getCurrentCheckBoxes().get(0).isChecked());
+        assertThat(solo.isCheckBoxChecked(lastIndex)).isTrue();
+        assertThat(solo.isCheckBoxChecked(0)).isFalse();
         assertChecked("Clicked last checkbox", 1);
 
         solo.scrollUp();
@@ -54,23 +63,23 @@ public class SimpleDirChooserUITest extends ActivityInstrumentationTestCase2<Sim
         pause();
         solo.clickOnCheckBox(0);
         assertChecked("Clicked first checkbox", 1);
-        assertTrue(solo.getCurrentCheckBoxes().get(0).isChecked());
+        assertThat(solo.isCheckBoxChecked(0)).isTrue();
         solo.clickOnCheckBox(1);
         assertChecked("Clicked second checkbox", 1);
-        assertTrue(solo.getCurrentCheckBoxes().get(1).isChecked());
+        assertThat(solo.isCheckBoxChecked(1)).isTrue();
     }
 
     private static void pause() throws InterruptedException {
-        Thread.sleep(500);
+        Thread.sleep(100);
     }
 
     private void assertChecked(String message, int expectedChecked) {
+        final ArrayList<CheckBox> boxes = getCurrentCheckBoxes();
+        assertThat(boxes).as("Checkboxes").isNotNull();
+        assertThat(boxes.size()).as("number of checkboxes").isGreaterThan(1);
         int checked = 0;
-        final ArrayList<CheckBox> boxes = solo.getCurrentCheckBoxes();
-        assertNotNull("Could not get checkboxes", boxes);
-        assertTrue("There are no checkboxes", boxes.size() > 1);
-        for (CheckBox checkBox : boxes) {
-            if (checkBox.isChecked()) {
+        for (int i = 0; i < boxes.size(); i++) {
+            if (solo.isCheckBoxChecked(i)) {
                 checked++;
             }
         }

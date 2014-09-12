@@ -8,6 +8,7 @@ import cgeo.geocaching.Waypoint;
 import cgeo.geocaching.enumerations.CacheAttribute;
 import cgeo.geocaching.enumerations.LoadFlags;
 import cgeo.geocaching.geopoint.Geopoint;
+import cgeo.geocaching.utils.Log;
 import cgeo.geocaching.utils.SynchronizedDateFormat;
 import cgeo.geocaching.utils.TextUtils;
 import cgeo.geocaching.utils.XmlUtils;
@@ -33,7 +34,7 @@ public final class GpxSerializer {
     public static final String PREFIX_XSI = "http://www.w3.org/2001/XMLSchema-instance";
     public static final String PREFIX_GPX = "http://www.topografix.com/GPX/1/0";
     public static final String PREFIX_GROUNDSPEAK = "http://www.groundspeak.com/cache/1/0";
-    public static final String PREFIX_GSAK = "http://www.gsak.net/xmlv1/4";
+    public static final String PREFIX_GSAK = "http://www.gsak.net/xmlv1/6";
     public static final String PREFIX_CGEO = "http://www.cgeo.org/wptext/1/0";
 
     /**
@@ -56,7 +57,7 @@ public final class GpxSerializer {
 
     public void writeGPX(List<String> allGeocodesIn, Writer writer, final ProgressListener progressListener) throws IOException {
         // create a copy of the geocode list, as we need to modify it, but it might be immutable
-        final ArrayList<String> allGeocodes = new ArrayList<String>(allGeocodesIn);
+        final ArrayList<String> allGeocodes = new ArrayList<>(allGeocodesIn);
 
         this.progressListener = progressListener;
         gpx.setOutput(writer);
@@ -73,7 +74,7 @@ public final class GpxSerializer {
         gpx.attribute(PREFIX_XSI, "schemaLocation",
                 PREFIX_GPX + " http://www.topografix.com/GPX/1/0/gpx.xsd " +
                         PREFIX_GROUNDSPEAK + " http://www.groundspeak.com/cache/1/0/1/cache.xsd " +
-                        PREFIX_GSAK + " http://www.gsak.net/xmlv1/4/gsak.xsd");
+                        PREFIX_GSAK + " http://www.gsak.net/xmlv1/6/gsak.xsd");
 
         // Split the overall set of geocodes into small chunks. That is a compromise between memory efficiency (because
         // we don't load all caches fully into memory) and speed (because we don't query each cache separately).
@@ -128,8 +129,8 @@ public final class GpxSerializer {
                     "container", cache.getSize().id,
                     "difficulty", Float.toString(cache.getDifficulty()),
                     "terrain", Float.toString(cache.getTerrain()),
-                    "country", cache.getLocation(),
-                    "state", "",
+                    "country", getCountry(cache),
+                    "state", getState(cache),
                     "encoded_hints", cache.getHint());
 
             writeAttributes(cache);
@@ -148,6 +149,9 @@ public final class GpxSerializer {
             writeTravelBugs(cache);
 
             gpx.endTag(PREFIX_GROUNDSPEAK, "cache");
+
+            writeGSAK(cache);
+
             gpx.endTag(PREFIX_GPX, "wpt");
 
             writeWaypoints(cache);
@@ -159,10 +163,29 @@ public final class GpxSerializer {
         }
     }
 
+    private void writeGSAK(final Geocache cache) throws IOException {
+        gpx.startTag(PREFIX_GSAK, "wptExtension");
+        XmlUtils.multipleTexts(gpx, PREFIX_GSAK,
+                "IsPremium", gpxBoolean(cache.isPremiumMembersOnly()),
+                "FavPoints", Integer.toString(cache.getFavoritePoints()),
+                "Watch", gpxBoolean(cache.isOnWatchlist()),
+                "GcNote", StringUtils.trimToEmpty(cache.getPersonalNote()));
+        gpx.endTag(PREFIX_GSAK, "wptExtension");
+    }
+
+    /**
+     * @param boolFlag
+     * @return XML schema compliant boolean representation of the boolean flag. This must be either true, false, 0 or 1,
+     *         but no other value (also not upper case True/False).
+     */
+    private static String gpxBoolean(boolean boolFlag) {
+        return boolFlag ? "true" : "false";
+    }
+
     private void writeWaypoints(final Geocache cache) throws IOException {
         final List<Waypoint> waypoints = cache.getWaypoints();
-        final List<Waypoint> ownWaypoints = new ArrayList<Waypoint>(waypoints.size());
-        final List<Waypoint> originWaypoints = new ArrayList<Waypoint>(waypoints.size());
+        final List<Waypoint> ownWaypoints = new ArrayList<>(waypoints.size());
+        final List<Waypoint> originWaypoints = new ArrayList<>(waypoints.size());
         int maxPrefix = 0;
         for (final Waypoint wp : cache.getWaypoints()) {
 
@@ -172,7 +195,7 @@ public final class GpxSerializer {
                 try {
                     final int numericPrefix = Integer.parseInt(prefix);
                     maxPrefix = Math.max(numericPrefix, maxPrefix);
-                } catch (final NumberFormatException ex) {
+                } catch (final NumberFormatException ignored) {
                     // ignore non numeric prefix, as it should be unique in the list of non-own waypoints already
                 }
             }
@@ -238,12 +261,13 @@ public final class GpxSerializer {
     }
 
     private void writeLogs(final Geocache cache) throws IOException {
-        if (cache.getLogs().isEmpty()) {
+        List<LogEntry> logs = cache.getLogs();
+        if (logs.isEmpty()) {
             return;
         }
         gpx.startTag(PREFIX_GROUNDSPEAK, "logs");
 
-        for (final LogEntry log : cache.getLogs()) {
+        for (final LogEntry log : logs) {
             gpx.startTag(PREFIX_GROUNDSPEAK, "log");
             gpx.attribute("", "id", Integer.toString(log.id));
 
@@ -258,7 +282,12 @@ public final class GpxSerializer {
 
             gpx.startTag(PREFIX_GROUNDSPEAK, "text");
             gpx.attribute("", "encoded", "False");
-            gpx.text(log.log);
+            try {
+                gpx.text(log.log);
+            } catch (final IllegalArgumentException e) {
+                Log.e("GpxSerializer.writeLogs: cannot write log " + log.id + " for cache " + cache.getGeocode(), e);
+                gpx.text(" [end of log omitted due to an invalid character]");
+            }
             gpx.endTag(PREFIX_GROUNDSPEAK, "text");
 
             gpx.endTag(PREFIX_GROUNDSPEAK, "log");
@@ -311,4 +340,27 @@ public final class GpxSerializer {
         gpx.endTag(PREFIX_GROUNDSPEAK, "attributes");
     }
 
+    public static String getState(final Geocache cache) {
+        return getLocationPart(cache, 0);
+    }
+
+    private static String getLocationPart(final Geocache cache, int partIndex) {
+        final String location = cache.getLocation();
+        if (StringUtils.contains(location, ", ")) {
+            final String[] parts = StringUtils.split(location, ',');
+            if (parts.length == 2) {
+                return StringUtils.trim(parts[partIndex]);
+            }
+        }
+        return StringUtils.EMPTY;
+    }
+
+    public static String getCountry(final Geocache cache) {
+        String country = getLocationPart(cache, 1);
+        if (StringUtils.isNotEmpty(country)) {
+            return country;
+        }
+        // fall back to returning everything, but only for the country
+        return cache.getLocation();
+    }
 }

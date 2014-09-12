@@ -7,6 +7,7 @@ import cgeo.geocaching.ICache;
 import cgeo.geocaching.LogCacheActivity;
 import cgeo.geocaching.R;
 import cgeo.geocaching.SearchResult;
+import cgeo.geocaching.activity.ActivityMixin;
 import cgeo.geocaching.connector.AbstractConnector;
 import cgeo.geocaching.connector.ILoggingManager;
 import cgeo.geocaching.connector.UserAction;
@@ -37,6 +38,7 @@ import org.eclipse.jdt.annotation.Nullable;
 
 import rx.functions.Action1;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -50,7 +52,7 @@ public class GCConnector extends AbstractConnector implements ISearchByGeocode, 
 
     private static final String CACHE_URL_SHORT = "http://coord.info/";
     // Double slash is used to force open in browser
-    private static final String CACHE_URL_LONG = "http://www.geocaching.com//seek/cache_details.aspx?wp=";
+    private static final String CACHE_URL_LONG = "http://www.geocaching.com/seek/cache_details.aspx?wp=";
     /**
      * Pocket queries downloaded from the website use a numeric prefix. The pocket query creator Android app adds a
      * verbatim "pocketquery" prefix.
@@ -143,7 +145,7 @@ public class GCConnector extends AbstractConnector implements ISearchByGeocode, 
 
         CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_loadpage);
 
-        final String page = GCParser.requestHtmlPage(geocode, guid, "y", String.valueOf(GCConstants.NUMBER_OF_LOGS));
+        final String page = GCParser.requestHtmlPage(geocode, guid, "y");
 
         if (StringUtils.isEmpty(page)) {
             final SearchResult search = new SearchResult();
@@ -192,8 +194,8 @@ public class GCConnector extends AbstractConnector implements ISearchByGeocode, 
 
     @Override
     public boolean isOwner(final ICache cache) {
-        return StringUtils.equalsIgnoreCase(cache.getOwnerUserId(), Settings.getUsername());
-
+        final String user = Settings.getUsername();
+        return StringUtils.isNotEmpty(user) && StringUtils.equalsIgnoreCase(cache.getOwnerUserId(), user);
     }
 
     @Override
@@ -283,8 +285,8 @@ public class GCConnector extends AbstractConnector implements ISearchByGeocode, 
     }
 
     @Override
-    public boolean supportsFavoritePoints() {
-        return true;
+    public boolean supportsFavoritePoints(final Geocache cache) {
+        return !cache.getType().isEvent();
     }
 
     @Override
@@ -339,6 +341,11 @@ public class GCConnector extends AbstractConnector implements ISearchByGeocode, 
             }
         }
         return status == StatusCode.NO_ERROR;
+    }
+
+    @Override
+    public void logout() {
+        GCLogin.getInstance().logout();
     }
 
     @Override
@@ -409,7 +416,12 @@ public class GCConnector extends AbstractConnector implements ISearchByGeocode, 
 
             @Override
             public void call(cgeo.geocaching.connector.UserAction.Context context) {
-                context.activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("http://www.geocaching.com/email/?u=" + Network.encode(context.userName))));
+                try {
+                    context.activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("http://www.geocaching.com/email/?u=" + Network.encode(context.userName))));
+                } catch (final ActivityNotFoundException e) {
+                    Log.e("Cannot find suitable activity", e);
+                    ActivityMixin.showToast(context.activity, R.string.err_application_no);
+                }
             }
         }));
         return actions;

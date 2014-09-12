@@ -14,13 +14,16 @@ import cgeo.geocaching.utils.MatcherWrapper;
 import cgeo.geocaching.utils.TextUtils;
 
 import ch.boye.httpclientandroidlib.HttpResponse;
+
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.Nullable;
 
-import android.graphics.drawable.BitmapDrawable;
+import rx.Observable;
+
+import android.graphics.drawable.Drawable;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -34,7 +37,7 @@ public class GCLogin extends AbstractLogin {
 
     private static final String DEFAULT_CUSTOM_DATE_FORMAT = "MM/dd/yyyy";
 
-    private final static String ENGLISH = "<a href=\"#\">English&#9660;</a>";
+    private final static String ENGLISH = "<a href=\"#\">English &#9660;</a>";
 
     private final static Map<String, SimpleDateFormat> GC_CUSTOM_DATE_FORMATS;
     public static final String LANGUAGE_CHANGE_URI = "http://www.geocaching.com/my/souvenirs.aspx";
@@ -44,13 +47,15 @@ public class GCLogin extends AbstractLogin {
                 DEFAULT_CUSTOM_DATE_FORMAT,
                 "yyyy-MM-dd",
                 "yyyy/MM/dd",
+                "dd.MM.yyyy",
                 "dd/MMM/yyyy",
+                "dd.MMM.yyyy",
                 "MMM/dd/yyyy",
                 "dd MMM yy",
                 "dd/MM/yyyy"
         };
 
-        final Map<String, SimpleDateFormat> map = new HashMap<String, SimpleDateFormat>();
+        final Map<String, SimpleDateFormat> map = new HashMap<>();
 
         for (final String format : formats) {
             map.put(format, new SimpleDateFormat(format, Locale.ENGLISH));
@@ -131,13 +136,11 @@ public class GCLogin extends AbstractLogin {
         assert loginData != null;  // Caught above
 
         if (getLoginStatus(loginData)) {
-            Log.i("Successfully logged in Geocaching.com as " + username + " (" + Settings.getGCMemberStatus() + ')');
-
             if (switchToEnglish(loginData) && retry) {
                 return login(false);
             }
+            Log.i("Successfully logged in Geocaching.com as " + username + " (" + Settings.getGCMemberStatus() + ')');
             Settings.setCookieStore(Cookies.dumpCookieStore());
-
             return StatusCode.NO_ERROR; // logged in
         }
 
@@ -172,6 +175,9 @@ public class GCLogin extends AbstractLogin {
         return StatusCode.NO_ERROR;
     }
 
+    private static String removeDotAndComma(final String str) {
+        return StringUtils.replaceChars(str, ".,", null);
+    }
 
     /**
      * Check if the user has been logged in when he retrieved the data.
@@ -198,7 +204,7 @@ public class GCLogin extends AbstractLogin {
             setActualUserName(TextUtils.getMatch(page, GCConstants.PATTERN_LOGIN_NAME, true, "???"));
             int cachesCount = 0;
             try {
-                cachesCount = Integer.parseInt(TextUtils.getMatch(page, GCConstants.PATTERN_CACHES_FOUND, true, "0").replaceAll("[,.]", ""));
+                cachesCount = Integer.parseInt(removeDotAndComma(TextUtils.getMatch(page, GCConstants.PATTERN_CACHES_FOUND, true, "0")));
             } catch (final NumberFormatException e) {
                 Log.e("getLoginStatus: bad cache count", e);
             }
@@ -253,7 +259,7 @@ public class GCLogin extends AbstractLogin {
         return false;
     }
 
-    public BitmapDrawable downloadAvatarAndGetMemberStatus() {
+    public Observable<Drawable> downloadAvatarAndGetMemberStatus() {
         try {
             final String responseData = StringUtils.defaultString(Network.getResponseData(Network.getRequest("http://www.geocaching.com/my/")));
             final String profile = TextUtils.replaceWhitespace(responseData);
@@ -263,12 +269,12 @@ public class GCLogin extends AbstractLogin {
                 Settings.setGCMemberStatus(GCConstants.MEMBER_STATUS_PM);
             }
 
-            setActualCachesFound(Integer.parseInt(TextUtils.getMatch(profile, GCConstants.PATTERN_CACHES_FOUND, true, "-1").replaceAll("[,.]", "")));
+            setActualCachesFound(Integer.parseInt(removeDotAndComma(TextUtils.getMatch(profile, GCConstants.PATTERN_CACHES_FOUND, true, "-1"))));
 
             final String avatarURL = TextUtils.getMatch(profile, GCConstants.PATTERN_AVATAR_IMAGE_PROFILE_PAGE, false, null);
-            if (null != avatarURL) {
+            if (avatarURL != null) {
                 final HtmlImage imgGetter = new HtmlImage("", false, 0, false);
-                return imgGetter.getDrawable(avatarURL.replace("avatar", "user/large"));
+                return imgGetter.fetchDrawable(avatarURL.replace("avatar", "user/large")).cast(Drawable.class);
             }
             // No match? There may be no avatar set by user.
             Log.d("No avatar set for user");
@@ -306,14 +312,14 @@ public class GCLogin extends AbstractLogin {
         if (GC_CUSTOM_DATE_FORMATS.containsKey(format)) {
             try {
                 return GC_CUSTOM_DATE_FORMATS.get(format).parse(trimmed);
-            } catch (final ParseException e) {
+            } catch (final ParseException ignored) {
             }
         }
 
         for (final SimpleDateFormat sdf : GC_CUSTOM_DATE_FORMATS.values()) {
             try {
                 return sdf.parse(trimmed);
-            } catch (final ParseException e) {
+            } catch (final ParseException ignored) {
             }
         }
 

@@ -30,26 +30,39 @@ import cgeo.geocaching.network.Parameters;
 import cgeo.geocaching.settings.Settings;
 import cgeo.geocaching.ui.DirectionImage;
 import cgeo.geocaching.utils.CancellableHandler;
+import cgeo.geocaching.utils.HtmlUtils;
+import cgeo.geocaching.utils.JsonUtils;
 import cgeo.geocaching.utils.Log;
 import cgeo.geocaching.utils.MatcherWrapper;
+import cgeo.geocaching.utils.RxUtils;
 import cgeo.geocaching.utils.SynchronizedDateFormat;
 import cgeo.geocaching.utils.TextUtils;
 
 import ch.boye.httpclientandroidlib.HttpResponse;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringEscapeUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.Nullable;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+
+import rx.Observable;
+import rx.Observable.OnSubscribe;
+import rx.Subscriber;
+import rx.functions.Action1;
+import rx.functions.Func0;
+import rx.functions.Func2;
 
 import android.net.Uri;
 import android.text.Html;
 
 import java.io.File;
+import java.io.IOException;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -66,6 +79,7 @@ import java.util.regex.Pattern;
 public abstract class GCParser {
     private final static SynchronizedDateFormat dateTbIn1 = new SynchronizedDateFormat("EEEEE, dd MMMMM yyyy", Locale.ENGLISH); // Saturday, 28 March 2009
     private final static SynchronizedDateFormat dateTbIn2 = new SynchronizedDateFormat("EEEEE, MMMMM dd, yyyy", Locale.ENGLISH); // Saturday, March 28, 2009
+    private final static ImmutablePair<StatusCode, Geocache> UNKNOWN_PARSE_ERROR = ImmutablePair.of(StatusCode.UNKNOWN_ERROR, null);
 
     private static SearchResult parseSearch(final String url, final String pageContent, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (StringUtils.isBlank(pageContent)) {
@@ -73,7 +87,7 @@ public abstract class GCParser {
             return null;
         }
 
-        final List<String> cids = new ArrayList<String>();
+        final List<String> cids = new ArrayList<>();
         String page = pageContent;
 
         final SearchResult searchResult = new SearchResult();
@@ -116,12 +130,12 @@ public abstract class GCParser {
 
         page = page.substring(startPos + 1, endPos - startPos + 1); // cut between <table> and </table>
 
-        final String[] rows = page.split("<tr class=");
-        final int rows_count = rows.length;
+        final String[] rows = StringUtils.splitByWholeSeparator(page, "<tr class=");
+        final int rowsCount = rows.length;
 
         int excludedCaches = 0;
-        final ArrayList<Geocache> caches = new ArrayList<Geocache>();
-        for (int z = 1; z < rows_count; z++) {
+        final ArrayList<Geocache> caches = new ArrayList<>();
+        for (int z = 1; z < rowsCount; z++) {
             final Geocache cache = new Geocache();
             final String row = rows[z];
 
@@ -135,7 +149,6 @@ public abstract class GCParser {
 
                 while (matcherGuidAndDisabled.find()) {
                     if (matcherGuidAndDisabled.groupCount() > 0) {
-                        //cache.setGuid(matcherGuidAndDisabled.group(1));
                         if (matcherGuidAndDisabled.group(2) != null) {
                             cache.setName(Html.fromHtml(matcherGuidAndDisabled.group(2).trim()).toString());
                         }
@@ -153,7 +166,7 @@ public abstract class GCParser {
                 }
             } catch (final RuntimeException e) {
                 // failed to parse GUID and/or Disabled
-                Log.w("GCParser.parseSearch: Failed to parse GUID and/or Disabled data");
+                Log.w("GCParser.parseSearch: Failed to parse GUID and/or Disabled data", e);
             }
 
             if (Settings.isExcludeDisabledCaches() && (cache.isDisabled() || cache.isArchived())) {
@@ -165,11 +178,11 @@ public abstract class GCParser {
             cache.setGeocode(TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_GEOCODE, true, 1, cache.getGeocode(), true));
 
             // cache type
-            cache.setType(CacheType.getByPattern(TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_TYPE, true, 1, null, true)));
+            cache.setType(CacheType.getByPattern(TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_TYPE, null)));
 
             // cache direction - image
             if (Settings.getLoadDirImg()) {
-                final String direction = TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_DIRECTION_DISTANCE, false, 1, null, false);
+                final String direction = TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_DIRECTION_DISTANCE, false, null);
                 if (direction != null) {
                     cache.setDirectionImg(direction);
                 }
@@ -196,19 +209,19 @@ public abstract class GCParser {
             }
 
             // size
-            final String container = TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_CONTAINER, false, 1, null, false);
+            final String container = TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_CONTAINER, false, null);
             cache.setSize(CacheSize.getById(container));
 
             // date hidden, makes sorting event caches easier
-            final String dateHidden = TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_HIDDEN_DATE, false, 1, null, false);
+            final String dateHidden = TextUtils.getMatch(row, GCConstants.PATTERN_SEARCH_HIDDEN_DATE, false, null);
             if (StringUtils.isNotBlank(dateHidden)) {
                 try {
-                    Date date = GCLogin.parseGcCustomDate(dateHidden);
+                    final Date date = GCLogin.parseGcCustomDate(dateHidden);
                     if (date != null) {
                         cache.setHidden(date);
                     }
-                } catch (ParseException e) {
-                    Log.e("Error parsing event date from search");
+                } catch (final ParseException e) {
+                    Log.e("Error parsing event date from search", e);
                 }
             }
 
@@ -258,7 +271,7 @@ public abstract class GCParser {
                     cache.setFavoritePoints(Integer.parseInt(result));
                 }
             } catch (final NumberFormatException e) {
-                Log.w("GCParser.parseSearch: Failed to parse favorite count");
+                Log.w("GCParser.parseSearch: Failed to parse favorite count", e);
             }
 
             caches.add(cache);
@@ -272,7 +285,7 @@ public abstract class GCParser {
                 searchResult.setTotalCountGC(Integer.parseInt(result) - excludedCaches);
             }
         } catch (final NumberFormatException e) {
-            Log.w("GCParser.parseSearch: Failed to parse cache count");
+            Log.w("GCParser.parseSearch: Failed to parse cache count", e);
         }
 
         String recaptchaText = null;
@@ -334,60 +347,76 @@ public abstract class GCParser {
     }
 
     static SearchResult parseCache(final String page, final CancellableHandler handler) {
-        final SearchResult searchResult = parseCacheFromText(page, handler);
+        final ImmutablePair<StatusCode, Geocache> parsed = parseCacheFromText(page, handler);
         // attention: parseCacheFromText already stores implicitly through searchResult.addCache
-        if (searchResult != null && !searchResult.getGeocodes().isEmpty()) {
-            final Geocache cache = searchResult.getFirstCacheFromResult(LoadFlags.LOAD_CACHE_OR_DB);
-            if (cache == null) {
-                return null;
-            }
-            getExtraOnlineInfo(cache, page, handler);
-            // too late: it is already stored through parseCacheFromText
-            cache.setDetailedUpdatedNow();
-            if (CancellableHandler.isCancelled(handler)) {
-                return null;
-            }
-
-            // save full detailed caches
-            CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_cache);
-            DataStore.saveCache(cache, EnumSet.of(SaveFlag.SAVE_DB));
-
-            // update progress message so user knows we're still working. This is more of a place holder than
-            // actual indication of what the program is doing
-            CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_render);
+        if (parsed.left != StatusCode.NO_ERROR) {
+            return new SearchResult(parsed.left);
         }
-        return searchResult;
+
+        final Geocache cache = parsed.right;
+        getExtraOnlineInfo(cache, page, handler);
+        // too late: it is already stored through parseCacheFromText
+        cache.setDetailedUpdatedNow();
+        if (CancellableHandler.isCancelled(handler)) {
+            return null;
+        }
+
+        // save full detailed caches
+        CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_cache);
+        DataStore.saveCache(cache, EnumSet.of(SaveFlag.DB));
+
+        // update progress message so user knows we're still working. This is more of a place holder than
+        // actual indication of what the program is doing
+        CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_render);
+        return new SearchResult(cache);
     }
 
-    static SearchResult parseCacheFromText(final String pageIn, final CancellableHandler handler) {
+    static SearchResult parseAndSaveCacheFromText(final String page, @Nullable final CancellableHandler handler) {
+        final ImmutablePair<StatusCode, Geocache> parsed = parseCacheFromText(page, handler);
+        final SearchResult result = new SearchResult(parsed.left);
+        if (parsed.left == StatusCode.NO_ERROR) {
+            result.addAndPutInCache(Collections.singletonList(parsed.right));
+            DataStore.saveLogsWithoutTransaction(parsed.right.getGeocode(), getLogs(parseUserToken(page), Logs.ALL).toBlocking().toIterable());
+        }
+        return result;
+    }
+
+    /**
+     * Parse cache from text and return either an error code or a cache object in a pair. Note that inline logs are
+     * not parsed nor saved, while the cache itself is.
+     *
+     * @param pageIn
+     *            the page text to parse
+     * @param handler
+     *            the handler to send the progress notifications to
+     * @return a pair, with a {@link StatusCode} on the left, and a non-null cache object on the right
+     *         iff the status code is {@link StatusCode.NO_ERROR}.
+     */
+    @NonNull
+    static private ImmutablePair<StatusCode, Geocache> parseCacheFromText(final String pageIn, @Nullable final CancellableHandler handler) {
         CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_details);
 
         if (StringUtils.isBlank(pageIn)) {
             Log.e("GCParser.parseCache: No page given");
-            return null;
+            return UNKNOWN_PARSE_ERROR;
         }
 
-        final SearchResult searchResult = new SearchResult();
-
         if (pageIn.contains(GCConstants.STRING_UNPUBLISHED_OTHER) || pageIn.contains(GCConstants.STRING_UNPUBLISHED_FROM_SEARCH)) {
-            searchResult.setError(StatusCode.UNPUBLISHED_CACHE);
-            return searchResult;
+            return ImmutablePair.of(StatusCode.UNPUBLISHED_CACHE, null);
         }
 
         if (pageIn.contains(GCConstants.STRING_PREMIUMONLY_1) || pageIn.contains(GCConstants.STRING_PREMIUMONLY_2)) {
-            searchResult.setError(StatusCode.PREMIUM_ONLY);
-            return searchResult;
+            return ImmutablePair.of(StatusCode.PREMIUM_ONLY, null);
         }
 
         final String cacheName = Html.fromHtml(TextUtils.getMatch(pageIn, GCConstants.PATTERN_NAME, true, "")).toString();
         if (GCConstants.STRING_UNKNOWN_ERROR.equalsIgnoreCase(cacheName)) {
-            searchResult.setError(StatusCode.UNKNOWN_ERROR);
-            return searchResult;
+            return UNKNOWN_PARSE_ERROR;
         }
 
         // first handle the content with line breaks, then trim everything for easier matching and reduced memory consumption in parsed fields
         String personalNoteWithLineBreaks = "";
-        MatcherWrapper matcher = new MatcherWrapper(GCConstants.PATTERN_PERSONALNOTE, pageIn);
+        final MatcherWrapper matcher = new MatcherWrapper(GCConstants.PATTERN_PERSONALNOTE, pageIn);
         if (matcher.find()) {
             personalNoteWithLineBreaks = matcher.group(1).trim();
         }
@@ -425,7 +454,7 @@ public abstract class GCParser {
         final int pos = tableInside.indexOf(GCConstants.STRING_CACHEDETAILS);
         if (pos == -1) {
             Log.e("GCParser.parseCache: ID \"cacheDetails\" not found on page");
-            return null;
+            return UNKNOWN_PARSE_ERROR;
         }
 
         tableInside = tableInside.substring(pos);
@@ -469,7 +498,7 @@ public abstract class GCParser {
                 }
             } catch (final ParseException e) {
                 // failed to parse cache hidden date
-                Log.w("GCParser.parseCache: Failed to parse cache hidden (event) date");
+                Log.w("GCParser.parseCache: Failed to parse cache hidden (event) date", e);
             }
 
             // favorite
@@ -486,19 +515,8 @@ public abstract class GCParser {
         // cache found
         cache.setFound(TextUtils.matches(page, GCConstants.PATTERN_FOUND) || TextUtils.matches(page, GCConstants.PATTERN_FOUND_ALTERNATIVE));
 
-        // cache found date
-        try {
-            final String foundDateString = TextUtils.getMatch(page, GCConstants.PATTERN_FOUND_DATE, true, null);
-            if (StringUtils.isNotBlank(foundDateString)) {
-                cache.setVisitedDate(GCLogin.parseGcCustomDate(foundDateString).getTime());
-            }
-        } catch (final ParseException e) {
-            // failed to parse cache found date
-            Log.w("GCParser.parseCache: Failed to parse cache found date");
-        }
-
         // cache type
-        cache.setType(CacheType.getByPattern(TextUtils.getMatch(page, GCConstants.PATTERN_TYPE, true, cache.getType().id)));
+        cache.setType(CacheType.getByGuid(TextUtils.getMatch(page, GCConstants.PATTERN_TYPE, true, cache.getType().id)));
 
         // on watchlist
         cache.setOnWatchlist(TextUtils.matches(page, GCConstants.PATTERN_WATCHLIST));
@@ -534,7 +552,12 @@ public abstract class GCParser {
         cache.setShortDescription(TextUtils.getMatch(page, GCConstants.PATTERN_SHORTDESC, true, ""));
 
         // cache description
-        cache.setDescription(TextUtils.getMatch(page, GCConstants.PATTERN_DESC, true, ""));
+        final String longDescription = TextUtils.getMatch(page, GCConstants.PATTERN_DESC, true, "");
+        String relatedWebPage = TextUtils.getMatch(page, GCConstants.PATTERN_RELATED_WEB_PAGE, true, "");
+        if (StringUtils.isNotEmpty(relatedWebPage)) {
+            relatedWebPage = String.format("<a href=\"%s\"><b>%s</b></a><br/><br/>", relatedWebPage, relatedWebPage);
+        }
+        cache.setDescription(relatedWebPage + longDescription);
 
         // cache attributes
         try {
@@ -542,7 +565,7 @@ public abstract class GCParser {
             if (null != attributesPre) {
                 final MatcherWrapper matcherAttributesInside = new MatcherWrapper(GCConstants.PATTERN_ATTRIBUTESINSIDE, attributesPre);
 
-                final ArrayList<String> attributes = new ArrayList<String>();
+                final ArrayList<String> attributes = new ArrayList<>();
                 while (matcherAttributesInside.find()) {
                     if (matcherAttributesInside.groupCount() > 1 && !matcherAttributesInside.group(2).equalsIgnoreCase("blank")) {
                         // by default, use the tooltip of the attribute
@@ -564,13 +587,13 @@ public abstract class GCParser {
             }
         } catch (final RuntimeException e) {
             // failed to parse cache attributes
-            Log.w("GCParser.parseCache: Failed to parse cache attributes");
+            Log.w("GCParser.parseCache: Failed to parse cache attributes", e);
         }
 
         // cache spoilers
         try {
             if (CancellableHandler.isCancelled(handler)) {
-                return null;
+                return UNKNOWN_PARSE_ERROR;
             }
             CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_spoilers);
 
@@ -593,7 +616,7 @@ public abstract class GCParser {
             }
         } catch (final RuntimeException e) {
             // failed to parse cache spoilers
-            Log.w("GCParser.parseCache: Failed to parse cache spoilers");
+            Log.w("GCParser.parseCache: Failed to parse cache spoilers", e);
         }
 
         // cache inventory
@@ -627,7 +650,7 @@ public abstract class GCParser {
             }
         } catch (final RuntimeException e) {
             // failed to parse cache inventory
-            Log.w("GCParser.parseCache: Failed to parse cache inventory (2)");
+            Log.w("GCParser.parseCache: Failed to parse cache inventory (2)", e);
         }
 
         // cache logs counts
@@ -649,7 +672,7 @@ public abstract class GCParser {
             }
         } catch (final NumberFormatException e) {
             // failed to parse logs
-            Log.w("GCParser.parseCache: Failed to parse cache log count");
+            Log.w("GCParser.parseCache: Failed to parse cache log count", e);
         }
 
         // waypoints - reset collection
@@ -665,13 +688,13 @@ public abstract class GCParser {
                 cache.addOrChangeWaypoint(waypoint, false);
                 cache.setUserModifiedCoords(true);
             }
-        } catch (final Geopoint.GeopointException e) {
+        } catch (final Geopoint.GeopointException ignored) {
         }
 
         int wpBegin = page.indexOf("<table class=\"Table\" id=\"ctl00_ContentBody_Waypoints\">");
         if (wpBegin != -1) { // parse waypoints
             if (CancellableHandler.isCancelled(handler)) {
-                return null;
+                return UNKNOWN_PARSE_ERROR;
             }
             CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_waypoints);
 
@@ -692,10 +715,10 @@ public abstract class GCParser {
                     wpList = wpList.substring(wpBegin + 7, wpEnd);
                 }
 
-                final String[] wpItems = wpList.split("<tr");
+                final String[] wpItems = StringUtils.splitByWholeSeparator(wpList, "<tr");
 
                 for (int j = 1; j < wpItems.length; j++) {
-                    String[] wp = wpItems[j].split("<td");
+                    String[] wp = StringUtils.splitByWholeSeparator(wpItems[j], "<td");
 
                     // waypoint name
                     // res is null during the unit tests
@@ -715,13 +738,12 @@ public abstract class GCParser {
                     // waypoint latitude and longitude
                     latlon = Html.fromHtml(TextUtils.getMatch(wp[7], GCConstants.PATTERN_WPPREFIXORLOOKUPORLATLON, false, 2, "", false)).toString().trim();
                     if (!StringUtils.startsWith(latlon, "???")) {
-                        waypoint.setLatlon(latlon);
                         waypoint.setCoords(new Geopoint(latlon));
                     }
 
                     j++;
                     if (wpItems.length > j) {
-                        wp = wpItems[j].split("<td");
+                        wp = StringUtils.splitByWholeSeparator(wpItems[j], "<td");
                     }
 
                     // waypoint note
@@ -734,25 +756,20 @@ public abstract class GCParser {
 
         cache.parseWaypointsFromNote();
 
-        // logs
-        cache.setLogs(getLogsFromDetails(page, false));
-
         // last check for necessary cache conditions
         if (StringUtils.isBlank(cache.getGeocode())) {
-            searchResult.setError(StatusCode.UNKNOWN_ERROR);
-            return searchResult;
+            return UNKNOWN_PARSE_ERROR;
         }
 
         cache.setDetailedUpdatedNow();
-        searchResult.addAndPutInCache(Collections.singletonList(cache));
-        return searchResult;
+        return ImmutablePair.of(StatusCode.NO_ERROR, cache);
     }
 
     private static String getNumberString(final String numberWithPunctuation) {
         return StringUtils.replaceChars(numberWithPunctuation, ".,", "");
     }
 
-    public static SearchResult searchByNextPage(final SearchResult search, boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByNextPage(final SearchResult search, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (search == null) {
             return null;
         }
@@ -770,15 +787,12 @@ public abstract class GCParser {
             return search;
         }
 
-        // As in the original code, remove the query string
-        final String uri = Uri.parse(url).buildUpon().query(null).build().toString();
-
         final Parameters params = new Parameters(
                 "__EVENTTARGET", "ctl00$ContentBody$pgrBottom$ctl08",
                 "__EVENTARGUMENT", "");
         GCLogin.putViewstates(params, viewstates);
 
-        final String page = GCLogin.getInstance().postRequestLogged(uri, params);
+        final String page = GCLogin.getInstance().postRequestLogged(url, params);
         if (!GCLogin.getInstance().getLoginStatus(page)) {
             Log.e("GCParser.postLogTrackable: Can not log in geocaching");
             return search;
@@ -796,7 +810,7 @@ public abstract class GCParser {
         }
 
         // search results don't need to be filtered so load GCVote ratings here
-        GCVote.loadRatings(new ArrayList<Geocache>(searchResult.getCachesFromSearchResult(LoadFlags.LOAD_CACHE_OR_DB)));
+        GCVote.loadRatings(new ArrayList<>(searchResult.getCachesFromSearchResult(LoadFlags.LOAD_CACHE_OR_DB)));
 
         // save to application
         search.setError(searchResult.getError());
@@ -838,7 +852,7 @@ public abstract class GCParser {
      * @return
      */
     @Nullable
-    private static SearchResult searchByAny(final CacheType cacheType, final boolean my, final boolean showCaptcha, final Parameters params, RecaptchaReceiver recaptchaReceiver) {
+    private static SearchResult searchByAny(final CacheType cacheType, final boolean my, final boolean showCaptcha, final Parameters params, final RecaptchaReceiver recaptchaReceiver) {
         insertCacheType(params, cacheType);
 
         final String uri = "http://www.geocaching.com/seek/nearest.aspx";
@@ -864,12 +878,12 @@ public abstract class GCParser {
         return search;
     }
 
-    public static SearchResult searchByCoords(final @NonNull Geopoint coords, final CacheType cacheType, final boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByCoords(final @NonNull Geopoint coords, final CacheType cacheType, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         final Parameters params = new Parameters("lat", Double.toString(coords.getLatitude()), "lng", Double.toString(coords.getLongitude()));
         return searchByAny(cacheType, false, showCaptcha, params, recaptchaReceiver);
     }
 
-    public static SearchResult searchByKeyword(final @NonNull String keyword, final CacheType cacheType, final boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByKeyword(final @NonNull String keyword, final CacheType cacheType, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (StringUtils.isBlank(keyword)) {
             Log.e("GCParser.searchByKeyword: No keyword given");
             return null;
@@ -887,7 +901,7 @@ public abstract class GCParser {
         return false;
     }
 
-    public static SearchResult searchByUsername(final String userName, final CacheType cacheType, final boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByUsername(final String userName, final CacheType cacheType, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (StringUtils.isBlank(userName)) {
             Log.e("GCParser.searchByUsername: No user name given");
             return null;
@@ -898,7 +912,7 @@ public abstract class GCParser {
         return searchByAny(cacheType, isSearchForMyCaches(userName), showCaptcha, params, recaptchaReceiver);
     }
 
-    public static SearchResult searchByPocketQuery(final String pocketGuid, final CacheType cacheType, final boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByPocketQuery(final String pocketGuid, final CacheType cacheType, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (StringUtils.isBlank(pocketGuid)) {
             Log.e("GCParser.searchByPocket: No guid name given");
             return null;
@@ -909,7 +923,7 @@ public abstract class GCParser {
         return searchByAny(cacheType, false, showCaptcha, params, recaptchaReceiver);
     }
 
-    public static SearchResult searchByOwner(final String userName, final CacheType cacheType, final boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByOwner(final String userName, final CacheType cacheType, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (StringUtils.isBlank(userName)) {
             Log.e("GCParser.searchByOwner: No user name given");
             return null;
@@ -919,32 +933,28 @@ public abstract class GCParser {
         return searchByAny(cacheType, isSearchForMyCaches(userName), showCaptcha, params, recaptchaReceiver);
     }
 
-    public static SearchResult searchByAddress(final String address, final CacheType cacheType, final boolean showCaptcha, RecaptchaReceiver recaptchaReceiver) {
+    public static SearchResult searchByAddress(final String address, final CacheType cacheType, final boolean showCaptcha, final RecaptchaReceiver recaptchaReceiver) {
         if (StringUtils.isBlank(address)) {
             Log.e("GCParser.searchByAddress: No address given");
             return null;
         }
-        try {
-            final JSONObject response = Network.requestJSON("http://www.geocaching.com/api/geocode", new Parameters("q", address));
-            if (response == null) {
-                return null;
-            }
-            if (!StringUtils.equalsIgnoreCase(response.getString("status"), "success")) {
-                return null;
-            }
-            if (!response.has("data")) {
-                return null;
-            }
-            final JSONObject data = response.getJSONObject("data");
-            if (data == null) {
-                return null;
-            }
-            return searchByCoords(new Geopoint(data.getDouble("lat"), data.getDouble("lng")), cacheType, showCaptcha, recaptchaReceiver);
-        } catch (final JSONException e) {
-            Log.w("GCParser.searchByAddress", e);
+
+        final ObjectNode response = Network.requestJSON("http://www.geocaching.com/api/geocode", new Parameters("q", address));
+        if (response == null) {
+            return null;
         }
 
-        return null;
+        if (!StringUtils.equalsIgnoreCase(response.path("status").asText(), "success")) {
+            return null;
+        }
+
+        final JsonNode data = response.path("data");
+        final JsonNode latNode = data.get("lat");
+        final JsonNode lngNode = data.get("lng");
+        if (latNode == null || lngNode == null) {
+            return null;
+        }
+        return searchByCoords(new Geopoint(latNode.asDouble(), lngNode.asDouble()), cacheType, showCaptcha, recaptchaReceiver);
     }
 
     @Nullable
@@ -994,13 +1004,13 @@ public abstract class GCParser {
             return null;
         }
 
-        String subPage = StringUtils.substringAfter(page, "class=\"PocketQueryListTable");
+        final String subPage = StringUtils.substringAfter(page, "class=\"PocketQueryListTable");
         if (StringUtils.isEmpty(subPage)) {
             Log.e("GCParser.searchPocketQueryList: class \"PocketQueryListTable\" not found on page");
             return Collections.emptyList();
         }
 
-        List<PocketQueryList> list = new ArrayList<PocketQueryList>();
+        final List<PocketQueryList> list = new ArrayList<>();
 
         final MatcherWrapper matcherPocket = new MatcherWrapper(GCConstants.PATTERN_LIST_PQ, subPage);
 
@@ -1008,7 +1018,7 @@ public abstract class GCParser {
             int maxCaches;
             try {
                 maxCaches = Integer.parseInt(matcherPocket.group(1));
-            } catch (NumberFormatException e) {
+            } catch (final NumberFormatException e) {
                 maxCaches = 0;
                 Log.e("GCParser.searchPocketQueryList: Unable to parse max caches", e);
             }
@@ -1022,7 +1032,7 @@ public abstract class GCParser {
         Collections.sort(list, new Comparator<PocketQueryList>() {
 
             @Override
-            public int compare(PocketQueryList left, PocketQueryList right) {
+            public int compare(final PocketQueryList left, final PocketQueryList right) {
                 return String.CASE_INSENSITIVE_ORDER.compare(left.getName(), right.getName());
             }
         });
@@ -1035,12 +1045,12 @@ public abstract class GCParser {
             final String log, final List<TrackableLog> trackables) {
         if (GCLogin.isEmpty(viewstates)) {
             Log.e("GCParser.postLog: No viewstate given");
-            return new ImmutablePair<StatusCode, String>(StatusCode.LOG_POST_ERROR, "");
+            return new ImmutablePair<>(StatusCode.LOG_POST_ERROR, "");
         }
 
         if (StringUtils.isBlank(log)) {
             Log.e("GCParser.postLog: No log text given");
-            return new ImmutablePair<StatusCode, String>(StatusCode.NO_LOG_TEXT, "");
+            return new ImmutablePair<>(StatusCode.NO_LOG_TEXT, "");
         }
 
         final String logInfo = log.replace("\n", "\r\n").trim(); // windows' eol and remove leading and trailing whitespaces
@@ -1084,10 +1094,11 @@ public abstract class GCParser {
         }
 
         final String uri = new Uri.Builder().scheme("http").authority("www.geocaching.com").path("/seek/log.aspx").encodedQuery("ID=" + cacheid).build().toString();
-        String page = GCLogin.getInstance().postRequestLogged(uri, params);
-        if (!GCLogin.getInstance().getLoginStatus(page)) {
+        final GCLogin gcLogin = GCLogin.getInstance();
+        String page = gcLogin.postRequestLogged(uri, params);
+        if (!gcLogin.getLoginStatus(page)) {
             Log.e("GCParser.postLog: Cannot log in geocaching");
-            return new ImmutablePair<StatusCode, String>(StatusCode.NOT_LOGGED_IN, "");
+            return new ImmutablePair<>(StatusCode.NOT_LOGGED_IN, "");
         }
 
         // maintenance, archived needs to be confirmed
@@ -1100,7 +1111,7 @@ public abstract class GCParser {
 
                 if (GCLogin.isEmpty(viewstatesConfirm)) {
                     Log.e("GCParser.postLog: No viewstate for confirm log");
-                    return new ImmutablePair<StatusCode, String>(StatusCode.LOG_POST_ERROR, "");
+                    return new ImmutablePair<>(StatusCode.LOG_POST_ERROR, "");
                 }
 
                 params.clear();
@@ -1149,22 +1160,22 @@ public abstract class GCParser {
                     DataStore.saveVisitDate(geocode);
                 }
 
-                GCLogin.getInstance().getLoginStatus(page);
+                gcLogin.getLoginStatus(page);
                 // the log-successful-page contains still the old value
-                if (GCLogin.getInstance().getActualCachesFound() >= 0) {
-                    GCLogin.getInstance().setActualCachesFound(GCLogin.getInstance().getActualCachesFound() + 1);
+                if (gcLogin.getActualCachesFound() >= 0) {
+                    gcLogin.setActualCachesFound(gcLogin.getActualCachesFound() + 1);
                 }
 
                 final String logID = TextUtils.getMatch(page, GCConstants.PATTERN_LOG_IMAGE_UPLOAD, "");
 
-                return new ImmutablePair<StatusCode, String>(StatusCode.NO_ERROR, logID);
+                return new ImmutablePair<>(StatusCode.NO_ERROR, logID);
             }
         } catch (final Exception e) {
             Log.e("GCParser.postLog.check", e);
         }
 
         Log.e("GCParser.postLog: Failed to post log because of unknown error");
-        return new ImmutablePair<StatusCode, String>(StatusCode.LOG_POST_ERROR, "");
+        return new ImmutablePair<>(StatusCode.LOG_POST_ERROR, "");
     }
 
     /**
@@ -1186,7 +1197,7 @@ public abstract class GCParser {
         final String page = GCLogin.getInstance().getRequestLogged(uri, null);
         if (StringUtils.isBlank(page)) {
             Log.e("GCParser.uploadLogImage: No data from server");
-            return new ImmutablePair<StatusCode, String>(StatusCode.UNKNOWN_ERROR, null);
+            return new ImmutablePair<>(StatusCode.UNKNOWN_ERROR, null);
         }
         assert page != null;
 
@@ -1362,7 +1373,7 @@ public abstract class GCParser {
     }
 
     @Nullable
-    static String requestHtmlPage(@Nullable final String geocode, @Nullable final String guid, final String log, final String numlogs) {
+    static String requestHtmlPage(@Nullable final String geocode, @Nullable final String guid, final String log) {
         final Parameters params = new Parameters("decrypt", "y");
         if (StringUtils.isNotBlank(geocode)) {
             params.put("wp", geocode);
@@ -1370,7 +1381,7 @@ public abstract class GCParser {
             params.put("guid", guid);
         }
         params.put("log", log);
-        params.put("numlogs", numlogs);
+        params.put("numlogs", "0");
 
         return GCLogin.getInstance().getRequestLogged("http://www.geocaching.com/seek/cache_details.aspx", params);
     }
@@ -1409,7 +1420,10 @@ public abstract class GCParser {
     }
 
     private static String getUserToken(final Geocache cache) {
-        final String page = requestHtmlPage(cache.getGeocode(), null, "n", "0");
+        return parseUserToken(requestHtmlPage(cache.getGeocode(), null, "n"));
+    }
+
+    private static String parseUserToken(final String page) {
         return TextUtils.getMatch(page, GCConstants.PATTERN_USERTOKEN, "");
     }
 
@@ -1475,7 +1489,7 @@ public abstract class GCParser {
             }
         } catch (final RuntimeException e) {
             // failed to parse trackable owner name
-            Log.w("GCParser.parseTrackable: Failed to parse trackable owner name");
+            Log.w("GCParser.parseTrackable: Failed to parse trackable owner name", e);
         }
 
         // trackable origin
@@ -1506,7 +1520,7 @@ public abstract class GCParser {
             }
         } catch (final RuntimeException e) {
             // failed to parse trackable last known place
-            Log.w("GCParser.parseTrackable: Failed to parse trackable last known place");
+            Log.w("GCParser.parseTrackable: Failed to parse trackable last known place", e);
         }
 
         // released date - can be missing on the page
@@ -1514,12 +1528,12 @@ public abstract class GCParser {
         if (releaseString != null) {
             try {
                 trackable.setReleased(dateTbIn1.parse(releaseString));
-            } catch (ParseException e) {
+            } catch (final ParseException ignored) {
                 if (trackable.getReleased() == null) {
                     try {
                         trackable.setReleased(dateTbIn2.parse(releaseString));
-                    } catch (ParseException e1) {
-                        Log.e("Could not parse trackable release " + releaseString);
+                    } catch (final ParseException e) {
+                        Log.e("Could not parse trackable release " + releaseString, e);
                     }
                 }
             }
@@ -1537,7 +1551,7 @@ public abstract class GCParser {
         }
 
         // trackable goal
-        trackable.setGoal(convertLinks(TextUtils.getMatch(page, GCConstants.PATTERN_TRACKABLE_GOAL, true, trackable.getGoal())));
+        trackable.setGoal(HtmlUtils.removeExtraParagraph(convertLinks(TextUtils.getMatch(page, GCConstants.PATTERN_TRACKABLE_GOAL, true, trackable.getGoal()))));
 
         // trackable details & image
         try {
@@ -1547,15 +1561,15 @@ public abstract class GCParser {
                 final String details = StringUtils.trim(matcherDetailsImage.group(4));
 
                 if (StringUtils.isNotEmpty(image)) {
-                    trackable.setImage(image);
+                    trackable.setImage(StringUtils.replace(image, "/display/", "/large/"));
                 }
                 if (StringUtils.isNotEmpty(details) && !StringUtils.equals(details, "No additional details available.")) {
-                    trackable.setDetails(convertLinks(details));
+                    trackable.setDetails(HtmlUtils.removeExtraParagraph(convertLinks(details)));
                 }
             }
         } catch (final RuntimeException e) {
             // failed to parse trackable details & image
-            Log.w("GCParser.parseTrackable: Failed to parse trackable details & image");
+            Log.w("GCParser.parseTrackable: Failed to parse trackable details & image", e);
         }
         if (StringUtils.isEmpty(trackable.getDetails()) && page.contains(GCConstants.ERROR_TB_NOT_ACTIVATED)) {
             trackable.setDetails(CgeoApplication.getInstance().getString(R.string.trackable_not_activated));
@@ -1577,7 +1591,7 @@ public abstract class GCParser {
                 long date = 0;
                 try {
                     date = GCLogin.parseGcCustomDate(matcherLogs.group(2)).getTime();
-                } catch (final ParseException e) {
+                } catch (final ParseException ignored) {
                 }
 
                 final LogEntry logDone = new LogEntry(
@@ -1622,137 +1636,145 @@ public abstract class GCParser {
         return trackable;
     }
 
-    private static String convertLinks(String input) {
+    private static String convertLinks(final String input) {
         if (input == null) {
             return null;
         }
         return StringUtils.replace(input, "../", GCConstants.GC_URL);
     }
 
-    /**
-     * Extract logs from a cache details page.
-     *
-     * @param page
-     *            the text of the details page
-     * @param friends
-     *            return friends logs only (will require a network request)
-     * @return a list of log entries or <code>null</code> if the logs could not be retrieved
-     *
-     */
-    @Nullable
-    private static List<LogEntry> getLogsFromDetails(final String page, final boolean friends) {
-        String rawResponse;
+    private enum Logs {
+        ALL(null),
+        FRIENDS("sf"),
+        OWN("sp");
 
-        if (friends) {
-            final MatcherWrapper userTokenMatcher = new MatcherWrapper(GCConstants.PATTERN_USERTOKEN, page);
-            if (!userTokenMatcher.find()) {
-                Log.e("GCParser.loadLogsFromDetails: unable to extract userToken");
-                return null;
-            }
+        final String paramName;
 
-            final String userToken = userTokenMatcher.group(1);
-            final Parameters params = new Parameters(
-                    "tkn", userToken,
-                    "idx", "1",
-                    "num", String.valueOf(GCConstants.NUMBER_OF_LOGS),
-                    "decrypt", "true",
-                    // "sp", Boolean.toString(personal), // personal logs
-                    "sf", Boolean.toString(friends));
-
-            final HttpResponse response = Network.getRequest("http://www.geocaching.com/seek/geocache.logbook", params);
-            if (response == null) {
-                Log.e("GCParser.loadLogsFromDetails: cannot log logs, response is null");
-                return null;
-            }
-            final int statusCode = response.getStatusLine().getStatusCode();
-            if (statusCode != 200) {
-                Log.e("GCParser.loadLogsFromDetails: error " + statusCode + " when requesting log information");
-                return null;
-            }
-            rawResponse = Network.getResponseData(response);
-            if (rawResponse == null) {
-                Log.e("GCParser.loadLogsFromDetails: unable to read whole response");
-                return null;
-            }
-        } else {
-            // extract embedded JSON data from page
-            rawResponse = TextUtils.getMatch(page, GCConstants.PATTERN_LOGBOOK, "");
+        Logs(final String paramName) {
+            this.paramName = paramName;
         }
 
-        return parseLogs(friends, rawResponse);
+        private String getParamName() {
+            return this.paramName;
+        }
     }
 
-    private static List<LogEntry> parseLogs(final boolean friends, String rawResponse) {
-        final List<LogEntry> logs = new ArrayList<LogEntry>();
-
-        // for non logged in users the log book is not shown
-        if (StringUtils.isBlank(rawResponse)) {
-            return logs;
+    /**
+     * Extract special logs (friends, own) through seperate request.
+     *
+     * @param page
+     *            The page to extrat userToken from
+     * @param logType
+     *            The logType to request
+     * @return Observable<LogEntry> The logs
+     */
+    private static Observable<LogEntry> getLogs(final String userToken, final Logs logType) {
+        if (userToken.isEmpty()) {
+            Log.e("GCParser.loadLogsFromDetails: unable to extract userToken");
+            return Observable.empty();
         }
 
-        try {
-            final JSONObject resp = new JSONObject(rawResponse);
-            if (!resp.getString("status").equals("success")) {
-                Log.e("GCParser.loadLogsFromDetails: status is " + resp.getString("status"));
-                return null;
+        return Observable.defer(new Func0<Observable<LogEntry>>() {
+            @Override
+            public Observable<LogEntry> call() {
+                final Parameters params = new Parameters(
+                        "tkn", userToken,
+                        "idx", "1",
+                        "num", String.valueOf(GCConstants.NUMBER_OF_LOGS),
+                        "decrypt", "true");
+                if (logType != Logs.ALL) {
+                    params.add(logType.getParamName(), Boolean.toString(Boolean.TRUE));
+                }
+                final HttpResponse response = Network.getRequest("http://www.geocaching.com/seek/geocache.logbook", params);
+                if (response == null) {
+                    Log.e("GCParser.loadLogsFromDetails: cannot log logs, response is null");
+                    return Observable.empty();
+                }
+                final int statusCode = response.getStatusLine().getStatusCode();
+                if (statusCode != 200) {
+                    Log.e("GCParser.loadLogsFromDetails: error " + statusCode + " when requesting log information");
+                    return Observable.empty();
+                }
+                final String rawResponse = Network.getResponseData(response);
+                if (rawResponse == null) {
+                    Log.e("GCParser.loadLogsFromDetails: unable to read whole response");
+                    return Observable.empty();
+                }
+                return parseLogs(logType != Logs.ALL, rawResponse);
             }
+        }).subscribeOn(RxUtils.networkScheduler);
+    }
 
-            final JSONArray data = resp.getJSONArray("data");
+    private static Observable<LogEntry> parseLogs(final boolean markAsFriendsLog, final String rawResponse) {
+        return Observable.create(new OnSubscribe<LogEntry>() {
+            @Override
+            public void call(final Subscriber<? super LogEntry> subscriber) {
+                // for non logged in users the log book is not shown
+                if (StringUtils.isBlank(rawResponse)) {
+                    subscriber.onCompleted();
+                    return;
+                }
 
-            for (int index = 0; index < data.length(); index++) {
-                final JSONObject entry = data.getJSONObject(index);
-
-                // FIXME: use the "LogType" field instead of the "LogTypeImage" one.
-                final String logIconNameExt = entry.optString("LogTypeImage", ".gif");
-                final String logIconName = logIconNameExt.substring(0, logIconNameExt.length() - 4);
-
-                long date = 0;
                 try {
-                    date = GCLogin.parseGcCustomDate(entry.getString("Visited")).getTime();
-                } catch (final ParseException e) {
-                    Log.e("GCParser.loadLogsFromDetails: failed to parse log date.");
+                    final ObjectNode resp = (ObjectNode) JsonUtils.reader.readTree(rawResponse);
+                    if (!resp.path("status").asText().equals("success")) {
+                        Log.e("GCParser.loadLogsFromDetails: status is " + resp.path("status").asText("[absent]"));
+                        subscriber.onCompleted();
+                        return;
+                    }
+
+                    final ArrayNode data = (ArrayNode) resp.get("data");
+                    for (final JsonNode entry: data) {
+                        // FIXME: use the "LogType" field instead of the "LogTypeImage" one.
+                        final String logIconNameExt = entry.path("LogTypeImage").asText(".gif");
+                        final String logIconName = logIconNameExt.substring(0, logIconNameExt.length() - 4);
+
+                        long date = 0;
+                        try {
+                            date = GCLogin.parseGcCustomDate(entry.get("Visited").asText()).getTime();
+                        } catch (ParseException | NullPointerException e) {
+                            Log.e("GCParser.loadLogsFromDetails: failed to parse log date", e);
+                        }
+
+                        // TODO: we should update our log data structure to be able to record
+                        // proper coordinates, and make them clickable. In the meantime, it is
+                        // better to integrate those coordinates into the text rather than not
+                        // display them at all.
+                        final String latLon = entry.path("LatLonString").asText();
+                        final String logText = (StringUtils.isEmpty(latLon) ? "" : (latLon + "<br/><br/>")) + TextUtils.removeControlCharacters(entry.path("LogText").asText());
+                        final LogEntry logDone = new LogEntry(
+                                TextUtils.removeControlCharacters(entry.path("UserName").asText()),
+                                date,
+                                LogType.getByIconName(logIconName),
+                                logText);
+                        logDone.found = entry.path("GeocacheFindCount").asInt();
+                        logDone.friend = markAsFriendsLog;
+
+                        final ArrayNode images = (ArrayNode) entry.get("Images");
+                        for (final JsonNode image: images) {
+                            final String url = "http://imgcdn.geocaching.com/cache/log/large/" + image.path("FileName").asText();
+                            final String title = TextUtils.removeControlCharacters(image.path("Name").asText());
+                            final Image logImage = new Image(url, title);
+                            logDone.addLogImage(logImage);
+                        }
+
+                        subscriber.onNext(logDone);
+                    }
+                } catch (final IOException e) {
+                    Log.w("GCParser.loadLogsFromDetails: Failed to parse cache logs", e);
                 }
-
-                // TODO: we should update our log data structure to be able to record
-                // proper coordinates, and make them clickable. In the meantime, it is
-                // better to integrate those coordinates into the text rather than not
-                // display them at all.
-                final String latLon = entry.getString("LatLonString");
-                final String logText = (StringUtils.isEmpty(latLon) ? "" : (latLon + "<br/><br/>")) + TextUtils.removeControlCharacters(entry.getString("LogText"));
-                final LogEntry logDone = new LogEntry(
-                        TextUtils.removeControlCharacters(entry.getString("UserName")),
-                        date,
-                        LogType.getByIconName(logIconName),
-                        logText);
-                logDone.found = entry.getInt("GeocacheFindCount");
-                logDone.friend = friends;
-
-                final JSONArray images = entry.getJSONArray("Images");
-                for (int i = 0; i < images.length(); i++) {
-                    final JSONObject image = images.getJSONObject(i);
-                    final String url = "http://imgcdn.geocaching.com/cache/log/large/" + image.getString("FileName");
-                    final String title = TextUtils.removeControlCharacters(image.getString("Name"));
-                    final Image logImage = new Image(url, title);
-                    logDone.addLogImage(logImage);
-                }
-
-                logs.add(logDone);
+                subscriber.onCompleted();
             }
-        } catch (final JSONException e) {
-            // failed to parse logs
-            Log.w("GCParser.loadLogsFromDetails: Failed to parse cache logs", e);
-        }
-
-        return logs;
+        });
     }
 
     @NonNull
-    public static List<LogType> parseTypes(String page) {
+    public static List<LogType> parseTypes(final String page) {
         if (StringUtils.isEmpty(page)) {
             return Collections.emptyList();
         }
 
-        final List<LogType> types = new ArrayList<LogType>();
+        final List<LogType> types = new ArrayList<>();
 
         final MatcherWrapper typeBoxMatcher = new MatcherWrapper(GCConstants.PATTERN_TYPEBOX, page);
         if (typeBoxMatcher.find() && typeBoxMatcher.groupCount() > 0) {
@@ -1796,7 +1818,7 @@ public abstract class GCParser {
             return null;
         }
 
-        final List<TrackableLog> trackableLogs = new ArrayList<TrackableLog>();
+        final List<TrackableLog> trackableLogs = new ArrayList<>();
 
         final MatcherWrapper trackableMatcher = new MatcherWrapper(GCConstants.PATTERN_TRACKABLE, page);
         while (trackableMatcher.find()) {
@@ -1835,30 +1857,45 @@ public abstract class GCParser {
     }
 
     private static void getExtraOnlineInfo(final Geocache cache, final String page, final CancellableHandler handler) {
+        // This method starts the page parsing for logs in the background, as well as retrieve the friends and own logs
+        // if requested. It merges them and stores them in the background, while the rating is retrieved if needed and
+        // stored. Then we wait for the log merging and saving to be completed before returning.
         if (CancellableHandler.isCancelled(handler)) {
             return;
         }
 
-        //cache.setLogs(loadLogsFromDetails(page, cache, false));
-        if (Settings.isFriendLogsWanted()) {
-            CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_logs);
-            final List<LogEntry> allLogs = cache.getLogs();
-            final List<LogEntry> friendLogs = getLogsFromDetails(page, true);
-            if (friendLogs != null) {
-                for (final LogEntry log : friendLogs) {
-                    if (allLogs.contains(log)) {
-                        allLogs.get(allLogs.indexOf(log)).friend = true;
-                    } else {
-                        cache.getLogs().add(log);
+        CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_logs);
+        final String userToken = parseUserToken(page);
+        final Observable<LogEntry> logs = getLogs(userToken, Logs.ALL);
+        final Observable<LogEntry> ownLogs = getLogs(userToken, Logs.OWN).cache();
+        final Observable<LogEntry> specialLogs = Settings.isFriendLogsWanted() ?
+                Observable.merge(getLogs(userToken, Logs.FRIENDS), ownLogs) : Observable.<LogEntry>empty();
+        final Observable<List<LogEntry>> mergedLogs = Observable.zip(logs.toList(), specialLogs.toList(),
+                new Func2<List<LogEntry>, List<LogEntry>, List<LogEntry>>() {
+                    @Override
+                    public List<LogEntry> call(final List<LogEntry> logEntries, final List<LogEntry> specialLogEntries) {
+                        mergeFriendsLogs(logEntries, specialLogEntries);
+                        return logEntries;
+                    }
+                }).cache();
+        mergedLogs.subscribe(new Action1<List<LogEntry>>() {
+                                 @Override
+                                 public void call(final List<LogEntry> logEntries) {
+                                     DataStore.saveLogsWithoutTransaction(cache.getGeocode(), logEntries);
+                                 }
+                             });
+        if (cache.isFound() && cache.getVisitedDate() == 0) {
+            ownLogs.subscribe(new Action1<LogEntry>() {
+                @Override
+                public void call(final LogEntry logEntry) {
+                    if (logEntry.type == LogType.FOUND_IT) {
+                        cache.setVisitedDate(logEntry.date);
                     }
                 }
-            }
+            });
         }
 
-        if (Settings.isRatingWanted()) {
-            if (CancellableHandler.isCancelled(handler)) {
-                return;
-            }
+        if (Settings.isRatingWanted() && !CancellableHandler.isCancelled(handler)) {
             CancellableHandler.sendLoadProgressDetail(handler, R.string.cache_dialog_loading_details_status_gcvote);
             final GCVoteRating rating = GCVote.getRating(cache.getGuid(), cache.getGeocode());
             if (rating != null) {
@@ -1867,77 +1904,85 @@ public abstract class GCParser {
                 cache.setMyVote(rating.getMyVote());
             }
         }
+
+        // Wait for completion of logs parsing, retrieving and merging
+        mergedLogs.toBlocking().last();
     }
 
-    public static boolean uploadModifiedCoordinates(Geocache cache, Geopoint wpt) {
+    /**
+     * Merge log entries and mark them as friends logs (personal and friends) to identify
+     * them on friends/personal logs tab.
+     *
+     * @param mergedLogs
+     *            the list to merge logs with
+     * @param logsToMerge
+     *            the list of logs to merge
+     */
+    private static void mergeFriendsLogs(final List<LogEntry> mergedLogs, final Iterable<LogEntry> logsToMerge) {
+        for (final LogEntry log : logsToMerge) {
+            if (mergedLogs.contains(log)) {
+                mergedLogs.get(mergedLogs.indexOf(log)).friend = true;
+            } else {
+                mergedLogs.add(log);
+            }
+        }
+    }
+
+    public static boolean uploadModifiedCoordinates(final Geocache cache, final Geopoint wpt) {
         return editModifiedCoordinates(cache, wpt);
     }
 
-    public static boolean deleteModifiedCoordinates(Geocache cache) {
+    public static boolean deleteModifiedCoordinates(final Geocache cache) {
         return editModifiedCoordinates(cache, null);
     }
 
-    public static boolean editModifiedCoordinates(Geocache cache, Geopoint wpt) {
+    public static boolean editModifiedCoordinates(final Geocache cache, final Geopoint wpt) {
         final String userToken = getUserToken(cache);
         if (StringUtils.isEmpty(userToken)) {
             return false;
         }
 
-        try {
-            JSONObject jo;
-            if (wpt != null) {
-                jo = new JSONObject().put("dto", (new JSONObject().put("ut", userToken)
-                        .put("data", new JSONObject()
-                                .put("lat", wpt.getLatitudeE6() / 1E6)
-                                .put("lng", wpt.getLongitudeE6() / 1E6))));
-            } else {
-                jo = new JSONObject().put("dto", (new JSONObject().put("ut", userToken)));
-            }
-
-            final String uriSuffix = wpt != null ? "SetUserCoordinate" : "ResetUserCoordinate";
-
-            final String uriPrefix = "http://www.geocaching.com/seek/cache_details.aspx/";
-            final HttpResponse response = Network.postJsonRequest(uriPrefix + uriSuffix, jo);
-            Log.i("Sending to " + uriPrefix + uriSuffix + " :" + jo.toString());
-
-            if (response != null && response.getStatusLine().getStatusCode() == 200) {
-                Log.i("GCParser.editModifiedCoordinates - edited on GC.com");
-                return true;
-            }
-
-        } catch (final JSONException e) {
-            Log.e("Unknown exception with json wrap code", e);
+        final ObjectNode jo = new ObjectNode(JsonUtils.factory);
+        final ObjectNode dto = jo.putObject("dto").put("ut", userToken);
+        if (wpt != null) {
+            dto.putObject("data").put("lat", wpt.getLatitudeE6() / 1E6).put("lng", wpt.getLongitudeE6() / 1E6);
         }
+
+        final String uriSuffix = wpt != null ? "SetUserCoordinate" : "ResetUserCoordinate";
+
+        final String uriPrefix = "http://www.geocaching.com/seek/cache_details.aspx/";
+        final HttpResponse response = Network.postJsonRequest(uriPrefix + uriSuffix, jo);
+        Log.i("Sending to " + uriPrefix + uriSuffix + " :" + jo.toString());
+
+        if (response != null && response.getStatusLine().getStatusCode() == 200) {
+            Log.i("GCParser.editModifiedCoordinates - edited on GC.com");
+            return true;
+        }
+
         Log.e("GCParser.deleteModifiedCoordinates - cannot delete modified coords");
         return false;
     }
 
-    public static boolean uploadPersonalNote(Geocache cache) {
+    public static boolean uploadPersonalNote(final Geocache cache) {
         final String userToken = getUserToken(cache);
         if (StringUtils.isEmpty(userToken)) {
             return false;
         }
 
-        try {
-            final JSONObject jo = new JSONObject()
-                    .put("dto", (new JSONObject()
-                            .put("et", cache.getPersonalNote())
-                            .put("ut", userToken)));
+        final ObjectNode jo = new ObjectNode(JsonUtils.factory);
+        jo.putObject("dto").put("et", StringUtils.defaultString(cache.getPersonalNote())).put("ut", userToken);
 
-            final String uriSuffix = "SetUserCacheNote";
+        final String uriSuffix = "SetUserCacheNote";
 
-            final String uriPrefix = "http://www.geocaching.com/seek/cache_details.aspx/";
-            final HttpResponse response = Network.postJsonRequest(uriPrefix + uriSuffix, jo);
-            Log.i("Sending to " + uriPrefix + uriSuffix + " :" + jo.toString());
+        final String uriPrefix = "http://www.geocaching.com/seek/cache_details.aspx/";
+        final HttpResponse response = Network.postJsonRequest(uriPrefix + uriSuffix, jo);
+        Log.i("Sending to " + uriPrefix + uriSuffix + " :" + jo.toString());
 
-            if (response != null && response.getStatusLine().getStatusCode() == 200) {
-                Log.i("GCParser.uploadPersonalNote - uploaded to GC.com");
-                return true;
-            }
-
-        } catch (final JSONException e) {
-            Log.e("Unknown exception with json wrap code", e);
+        if (response != null && response.getStatusLine().getStatusCode() == 200) {
+            Log.i("GCParser.uploadPersonalNote - uploaded to GC.com");
+            return true;
         }
+
         Log.e("GCParser.uploadPersonalNote - cannot upload personal note");
         return false;
     }

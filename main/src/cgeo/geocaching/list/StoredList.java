@@ -16,6 +16,7 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.res.Resources;
 
+import java.lang.ref.WeakReference;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,12 +24,12 @@ import java.util.Comparator;
 import java.util.List;
 
 public final class StoredList extends AbstractList {
-    public static final int TEMPORARY_LIST_ID = 0;
-    public static final StoredList TEMPORARY_LIST = new StoredList(TEMPORARY_LIST_ID, "<temporary>", 0);  // Never displayed
+    private static final int TEMPORARY_LIST_ID = 0;
+    public static final StoredList TEMPORARY_LIST = new StoredList(TEMPORARY_LIST_ID, "<temporary>", 0); // Never displayed
     public static final int STANDARD_LIST_ID = 1;
     private final int count; // this value is only valid as long as the list is not changed by other database operations
 
-    public StoredList(int id, String title, int count) {
+    public StoredList(final int id, final String title, final int count) {
         super(id, title);
         this.count = count;
     }
@@ -47,7 +48,7 @@ public final class StoredList extends AbstractList {
     }
 
     @Override
-    public boolean equals(Object obj) {
+    public boolean equals(final Object obj) {
         if (this == obj) {
             return true;
         }
@@ -58,18 +59,14 @@ public final class StoredList extends AbstractList {
     }
 
     public static class UserInterface {
-        private final Activity activity;
+        private final WeakReference<Activity> activityRef;
         private final CgeoApplication app;
         private final Resources res;
 
-        public UserInterface(final Activity activity) {
-            this.activity = activity;
+        public UserInterface(final @NonNull Activity activity) {
+            this.activityRef = new WeakReference<>(activity);
             app = CgeoApplication.getInstance();
             res = app.getResources();
-        }
-
-        public void promptForListSelection(final int titleId, @NonNull final Action1<Integer> runAfterwards) {
-            promptForListSelection(titleId, runAfterwards, false, -1);
         }
 
         public void promptForListSelection(final int titleId, @NonNull final Action1<Integer> runAfterwards, final boolean onlyConcreteLists, final int exceptListId) {
@@ -77,38 +74,21 @@ public final class StoredList extends AbstractList {
         }
 
         public void promptForListSelection(final int titleId, @NonNull final Action1<Integer> runAfterwards, final boolean onlyConcreteLists, final int exceptListId, final String newListName) {
-            final List<AbstractList> lists = new ArrayList<AbstractList>();
-            lists.addAll(getSortedLists());
+            final List<AbstractList> lists = getMenuLists(onlyConcreteLists, exceptListId);
 
-            if (exceptListId > StoredList.TEMPORARY_LIST_ID) {
-                StoredList exceptList = DataStore.getList(exceptListId);
-                if (exceptList != null) {
-                    lists.remove(exceptList);
-                }
-            }
-
-            if (!onlyConcreteLists) {
-                if (exceptListId != PseudoList.ALL_LIST.id) {
-                    lists.add(PseudoList.ALL_LIST);
-                }
-                if (exceptListId != PseudoList.HISTORY_LIST.id) {
-                    lists.add(PseudoList.HISTORY_LIST);
-                }
-            }
-            lists.add(PseudoList.NEW_LIST);
-
-            final List<CharSequence> listsTitle = new ArrayList<CharSequence>();
-            for (AbstractList list : lists) {
+            final List<CharSequence> listsTitle = new ArrayList<>();
+            for (final AbstractList list : lists) {
                 listsTitle.add(list.getTitleAndCount());
             }
 
             final CharSequence[] items = new CharSequence[listsTitle.size()];
 
-            AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+            final Activity activity = activityRef.get();
+            final AlertDialog.Builder builder = new AlertDialog.Builder(activity);
             builder.setTitle(res.getString(titleId));
             builder.setItems(listsTitle.toArray(items), new DialogInterface.OnClickListener() {
                 @Override
-                public void onClick(DialogInterface dialogInterface, int itemId) {
+                public void onClick(final DialogInterface dialogInterface, final int itemId) {
                     final AbstractList list = lists.get(itemId);
                     if (list == PseudoList.NEW_LIST) {
                         // create new list on the fly
@@ -122,6 +102,31 @@ public final class StoredList extends AbstractList {
             builder.create().show();
         }
 
+        public static List<AbstractList> getMenuLists(final boolean onlyConcreteLists, final int exceptListId) {
+            final List<AbstractList> lists = new ArrayList<>();
+            lists.addAll(getSortedLists());
+
+            if (exceptListId > StoredList.TEMPORARY_LIST.id) {
+                final StoredList exceptList = DataStore.getList(exceptListId);
+                if (exceptList != null) {
+                    lists.remove(exceptList);
+                }
+            }
+
+            if (!onlyConcreteLists) {
+                if (exceptListId != PseudoList.ALL_LIST.id) {
+                    lists.add(PseudoList.ALL_LIST);
+                }
+                if (exceptListId != PseudoList.HISTORY_LIST.id) {
+                    lists.add(PseudoList.HISTORY_LIST);
+                }
+            }
+            if (exceptListId != PseudoList.NEW_LIST.id) {
+                lists.add(PseudoList.NEW_LIST);
+            }
+            return lists;
+        }
+
         @NonNull
         private static List<StoredList> getSortedLists() {
             final Collator collator = Collator.getInstance();
@@ -129,7 +134,7 @@ public final class StoredList extends AbstractList {
             Collections.sort(lists, new Comparator<StoredList>() {
 
                 @Override
-                public int compare(StoredList lhs, StoredList rhs) {
+                public int compare(final StoredList lhs, final StoredList rhs) {
                     // have the standard list at the top
                     if (lhs.id == STANDARD_LIST_ID) {
                         return -1;
@@ -144,11 +149,17 @@ public final class StoredList extends AbstractList {
             return lists;
         }
 
-        public void promptForListCreation(@NonNull final Action1<Integer> runAfterwards, String newListName) {
+        public void promptForListCreation(@NonNull final Action1<Integer> runAfterwards, final String newListName) {
             handleListNameInput(newListName, R.string.list_dialog_create_title, R.string.list_dialog_create, new Action1<String>() {
 
+                // We need to update the list cache by creating a new StoredList object here.
+                @SuppressWarnings("unused")
                 @Override
                 public void call(final String listName) {
+                    final Activity activity = activityRef.get();
+                    if (activity == null) {
+                        return;
+                    }
                     final int newId = DataStore.createList(listName);
                     new StoredList(newId, listName, 0);
 
@@ -162,13 +173,17 @@ public final class StoredList extends AbstractList {
             });
         }
 
-        private void handleListNameInput(final String defaultValue, int dialogTitle, int buttonTitle, final Action1<String> runnable) {
+        private void handleListNameInput(final String defaultValue, final int dialogTitle, final int buttonTitle, final Action1<String> runnable) {
+            final Activity activity = activityRef.get();
+            if (activity == null) {
+                return;
+            }
             Dialogs.input(activity, dialogTitle, defaultValue, buttonTitle, new Action1<String>() {
 
                 @Override
                 public void call(final String input) {
                     // remove whitespaces added by autocompletion of Android keyboard
-                    String listName = StringUtils.trim(input);
+                    final String listName = StringUtils.trim(input);
                     if (StringUtils.isNotBlank(listName)) {
                         runnable.call(listName);
                     }
@@ -191,19 +206,23 @@ public final class StoredList extends AbstractList {
     }
 
     /**
-     * Get the list title. This method is not public by intention to make clients use the {@link UserInterface} class.
-     *
-     * @return
+     * Get the list title.
      */
-    protected String getTitle() {
+    @Override
+    public String getTitle() {
         return title;
+    }
+
+    @Override
+    public int getNumberOfCaches() {
+        return count;
     }
 
     /**
      * Return the given list, if it is a concrete list. Return the default list otherwise.
      */
-    public static int getConcreteList(int listId) {
-        if (listId == PseudoList.ALL_LIST.id || listId == TEMPORARY_LIST_ID || listId == PseudoList.HISTORY_LIST.id) {
+    public static int getConcreteList(final int listId) {
+        if (listId == PseudoList.ALL_LIST.id || listId == TEMPORARY_LIST.id || listId == PseudoList.HISTORY_LIST.id) {
             return STANDARD_LIST_ID;
         }
         return listId;

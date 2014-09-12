@@ -2,24 +2,18 @@
 <resources>
   <!-- changelog for the master branch -->
   <string name="changelog_master" translatable="false">
-    <b>Next feature release</b>\n
-    <b>New Features:</b>\n
-     · Parallel loading from different platforms to speed up live map\n
-     · All GCVote related settings moved to Menu-Services-GCVote\n
-     · Support of some GSAK specific GPX contents\n
-     · Create waypoint from personal note also for OC caches\n
-     · Copy and translate operations also for TB information\n
-     · Decrypt waypoint note by tapping on it\n
-     · Long press filter button in main menu to reset it\n
-    <b>Bugfixing:</b>\n
-     · Corrected wrong field note progress indication\n
-     · When using "external map" sometimes the position marker was not shown\m
-     · Circles on map now also shown for caches with final coords defined\n
-     · Adding event caches to calendar corrected for events without starting time\n
-     · Logging of OC caches was not possible if no GC login data was stored\n
-     · TB details have been empty if HTML syntax was incorrect\n
-     · Swipe left from cache details not working in some cases\n
-     \n
-     \n
+    <b>Next feature release:</b>\n
+    · New: Google Play Services used for location (less battery usage)\n
+    · New: Optional low power GPS mode for parts of the app which don\'t require high precision\n
+    · New: Confirmation dialog for dangerous log types\n
+    · New: Store found date of found caches when importing via GPX\n
+    · New: Select a waypoint of a cache as target directly from compass\n
+    · New: Suggestion for waypoint name depending on its type\n
+    · New: Import lab caches as virtual caches\n
+    · New: Remember zoom level of live map and cache map separately\n
+    · New: Confirmation for deleting all offline logs\n
+    · Fix: Improved compass rotation algorithm\n
+    · Fix: Smilies fit line height in logbook\n
+    \n
   </string>
 </resources>

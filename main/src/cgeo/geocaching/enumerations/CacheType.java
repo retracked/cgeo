@@ -19,7 +19,8 @@ public enum CacheType {
     MYSTERY("mystery", "Unknown Cache", "40861821-1835-4e11-b666-8d41064d03fe", R.string.mystery, R.drawable.type_mystery),
     LETTERBOX("letterbox", "Letterbox hybrid", "4bdd8fb2-d7bc-453f-a9c5-968563b15d24", R.string.letterbox, R.drawable.type_letterbox),
     EVENT("event", "Event Cache", "69eb8534-b718-4b35-ae3c-a856a55b0874", R.string.event, R.drawable.type_event),
-    MEGA_EVENT("mega", "Mega-event Cache", "69eb8535-b718-4b35-ae3c-a856a55b0874", R.string.mega, R.drawable.type_mega),
+    MEGA_EVENT("mega", "Mega-Event Cache", "69eb8535-b718-4b35-ae3c-a856a55b0874", R.string.mega, R.drawable.type_mega),
+    GIGA_EVENT("giga", "Giga-Event Cache", "51420629-5739-4945-8bdd-ccfd434c0ead", R.string.giga, R.drawable.type_giga),
     EARTH("earth", "Earthcache", "c66f5cf3-9523-4549-b8dd-759cd2f18db8", R.string.earth, R.drawable.type_earth),
     CITO("cito", "Cache in Trash out Event", "57150806-bc1a-42d6-9cf0-538d171a2d22", R.string.cito, R.drawable.type_cito),
     WEBCAM("webcam", "Webcam Cache", "31d2ae3c-c358-4b5f-8dcd-2185bf472d3d", R.string.webcam, R.drawable.type_webcam),
@@ -47,7 +48,7 @@ public enum CacheType {
     private final int stringId;
     public final int markerId;
 
-    CacheType(String id, String pattern, String guid, int stringId, int markerId) {
+    CacheType(final String id, final String pattern, final String guid, final int stringId, final int markerId) {
         this.id = id;
         this.pattern = pattern;
         this.guid = guid;
@@ -57,15 +58,26 @@ public enum CacheType {
 
     private final static Map<String, CacheType> FIND_BY_ID;
     private final static Map<String, CacheType> FIND_BY_PATTERN;
+    private final static Map<String, CacheType> FIND_BY_GUID;
     static {
-        final HashMap<String, CacheType> mappingId = new HashMap<String, CacheType>();
-        final HashMap<String, CacheType> mappingPattern = new HashMap<String, CacheType>();
-        for (CacheType ct : values()) {
+        final HashMap<String, CacheType> mappingId = new HashMap<>();
+        final HashMap<String, CacheType> mappingPattern = new HashMap<>();
+        final HashMap<String, CacheType> mappingGuid = new HashMap<>();
+        for (final CacheType ct : values()) {
             mappingId.put(ct.id, ct);
             mappingPattern.put(ct.pattern.toLowerCase(Locale.US), ct);
+            mappingGuid.put(ct.guid, ct);
         }
+        // Add old mystery type for GPX file compatibility.
+        mappingPattern.put("Mystery Cache".toLowerCase(Locale.US), MYSTERY);
+        // This pattern briefly appeared on gc.com in 2014-08.
+        mappingPattern.put("Traditional Geocache".toLowerCase(Locale.US), TRADITIONAL);
+        // map lab caches to the virtual type for the time being
+        mappingPattern.put("Lab Cache".toLowerCase(Locale.US), VIRTUAL);
+
         FIND_BY_ID = Collections.unmodifiableMap(mappingId);
         FIND_BY_PATTERN = Collections.unmodifiableMap(mappingPattern);
+        FIND_BY_GUID = Collections.unmodifiableMap(mappingGuid);
     }
 
     public static CacheType getById(final String id) {
@@ -84,12 +96,20 @@ public enum CacheType {
         return result;
     }
 
+    public static CacheType getByGuid(final String id) {
+        final CacheType result = (id != null) ? CacheType.FIND_BY_GUID.get(id) : null;
+        if (result == null) {
+            return UNKNOWN;
+        }
+        return result;
+    }
+
     public final String getL10n() {
         return CgeoApplication.getInstance().getBaseContext().getResources().getString(stringId);
     }
 
     public boolean isEvent() {
-        return EVENT == this || MEGA_EVENT == this || CITO == this || LOSTANDFOUND == this || BLOCK_PARTY == this || GPS_EXHIBIT == this;
+        return EVENT == this || MEGA_EVENT == this || CITO == this || GIGA_EVENT == this || LOSTANDFOUND == this || BLOCK_PARTY == this || GPS_EXHIBIT == this;
     }
 
     @Override
@@ -103,7 +123,7 @@ public enum CacheType {
      * @param cache
      * @return true if this is the ALL type or if this type equals the type of the cache.
      */
-    public boolean contains(ICache cache) {
+    public boolean contains(final ICache cache) {
         if (cache == null) {
             return false;
         }

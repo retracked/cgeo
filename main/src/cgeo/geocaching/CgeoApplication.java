@@ -1,15 +1,31 @@
 package cgeo.geocaching;
 
-import cgeo.geocaching.sensors.DirectionProvider;
+import cgeo.geocaching.playservices.LocationProvider;
+import cgeo.geocaching.sensors.GeoData;
 import cgeo.geocaching.sensors.GeoDataProvider;
+import cgeo.geocaching.sensors.GpsStatusProvider;
+import cgeo.geocaching.sensors.GpsStatusProvider.Status;
 import cgeo.geocaching.sensors.IGeoData;
+import cgeo.geocaching.sensors.OrientationProvider;
+import cgeo.geocaching.sensors.RotationProvider;
+import cgeo.geocaching.settings.Settings;
 import cgeo.geocaching.utils.Log;
+import cgeo.geocaching.utils.OOMDumpingUncaughtExceptionHandler;
+import cgeo.geocaching.utils.RxUtils;
 
-import org.apache.commons.lang3.tuple.ImmutablePair;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesUtil;
+
+import org.eclipse.jdt.annotation.NonNull;
+
 import rx.Observable;
-import rx.functions.Func2;
+import rx.functions.Action1;
+import rx.functions.Func1;
 
 import android.app.Application;
+import android.view.ViewConfiguration;
+
+import java.lang.reflect.Field;
 
 public class CgeoApplication extends Application {
 
@@ -17,7 +33,35 @@ public class CgeoApplication extends Application {
     public boolean showLoginToast = true; //login toast shown just once.
     private boolean liveMapHintShownInThisSession = false; // livemap hint has been shown
     private static CgeoApplication instance;
-    private Observable<ImmutablePair<IGeoData,Float>> geoDir;
+    private Observable<IGeoData> geoDataObservable;
+    private Observable<IGeoData> geoDataObservableLowPower;
+    private Observable<Float> directionObservable;
+    private Observable<Status> gpsStatusObservable;
+    @NonNull private volatile IGeoData currentGeo = GeoData.DUMMY_LOCATION;
+    private volatile boolean hasValidLocation = false;
+    private volatile float currentDirection = 0.0f;
+    private boolean isGooglePlayServicesAvailable = false;
+    private final Action1<IGeoData> rememberGeodataAction = new Action1<IGeoData>() {
+        @Override
+        public void call(final IGeoData geoData) {
+            currentGeo = geoData;
+            hasValidLocation = true;
+        }
+    };
+
+    public static void dumpOnOutOfMemory(final boolean enable) {
+
+        if (enable) {
+
+            if (!OOMDumpingUncaughtExceptionHandler.activateHandler()) {
+                Log.e("OOM dumping handler not activated (either a problem occured or it was already active)");
+            }
+        } else {
+            if (!OOMDumpingUncaughtExceptionHandler.resetToDefault()) {
+                Log.e("OOM dumping handler not resetted (either a problem occured or it was not active)");
+            }
+        }
+    }
 
     public CgeoApplication() {
         setInstance(this);
@@ -32,33 +76,107 @@ public class CgeoApplication extends Application {
     }
 
     @Override
+    public void onCreate() {
+        try {
+            final ViewConfiguration config = ViewConfiguration.get(this);
+            final Field menuKeyField = ViewConfiguration.class.getDeclaredField("sHasPermanentMenuKey");
+            menuKeyField.setAccessible(true);
+            menuKeyField.setBoolean(config, false);
+        } catch (IllegalArgumentException | IllegalAccessException | NoSuchFieldException ignored) {
+        }
+
+        // Set language to English if the user decided so.
+        Settings.setLanguage(Settings.isUseEnglish());
+
+        // ensure initialization of lists
+        DataStore.getLists();
+
+        // Check if Google Play services is available
+        if (GooglePlayServicesUtil.isGooglePlayServicesAvailable(this) == ConnectionResult.SUCCESS) {
+            isGooglePlayServicesAvailable = true;
+        }
+        Log.i("Google Play services are " + (isGooglePlayServicesAvailable ? "" : "not ") + "available");
+        setupGeoDataObservables(Settings.useGooglePlayServices(), Settings.useLowPowerMode());
+        setupDirectionObservable(Settings.useLowPowerMode());
+        gpsStatusObservable = GpsStatusProvider.create(this).replay(1).refCount();
+
+        // Attempt to acquire an initial location before any real activity happens.
+        geoDataObservableLowPower.subscribeOn(RxUtils.looperCallbacksScheduler).first().subscribe(rememberGeodataAction);
+    }
+
+    public void setupGeoDataObservables(final boolean useGooglePlayServices, final boolean useLowPowerLocation) {
+        if (useGooglePlayServices) {
+            geoDataObservable = LocationProvider.getMostPrecise(this).doOnNext(rememberGeodataAction);
+            if (useLowPowerLocation) {
+                geoDataObservableLowPower = LocationProvider.getLowPower(this, true).doOnNext(rememberGeodataAction);
+            } else {
+                geoDataObservableLowPower = geoDataObservable;
+            }
+        } else {
+            geoDataObservable = GeoDataProvider.create(this).replay(1).refCount().doOnNext(rememberGeodataAction);
+            geoDataObservableLowPower = geoDataObservable;
+        }
+    }
+
+    public void setupDirectionObservable(final boolean useLowPower) {
+        directionObservable = RotationProvider.create(this, useLowPower).onErrorResumeNext(new Func1<Throwable, Observable<? extends Float>>() {
+            @Override
+            public Observable<? extends Float> call(final Throwable throwable) {
+                return OrientationProvider.create(CgeoApplication.this);
+            }
+        }).onErrorResumeNext(new Func1<Throwable, Observable<? extends Float>>() {
+            @Override
+            public Observable<? extends Float> call(final Throwable throwable) {
+                Log.e("Device orientation will not be available as no suitable sensors were found");
+                return Observable.<Float>never().startWith(0.0f);
+            }
+        }).replay(1).refCount().doOnNext(new Action1<Float>() {
+            @Override
+            public void call(final Float direction) {
+                currentDirection = direction;
+            }
+        });
+    }
+
+    @Override
     public void onLowMemory() {
         Log.i("Cleaning applications cache.");
         DataStore.removeAllFromCache();
     }
 
-    public synchronized Observable<ImmutablePair<IGeoData, Float>> geoDirObservable() {
-        if (geoDir == null) {
-            geoDir = Observable.combineLatest(GeoDataProvider.create(this), DirectionProvider.create(this), new Func2<IGeoData, Float, ImmutablePair<IGeoData, Float>>() {
-                @Override
-                public ImmutablePair<IGeoData, Float> call(final IGeoData geoData, final Float dir) {
-                    return new ImmutablePair<IGeoData, Float>(geoData, dir);
-                }
-            });
+    public Observable<IGeoData> geoDataObservable(final boolean lowPower) {
+        return lowPower ? geoDataObservableLowPower : geoDataObservable;
+    }
+
+    public Observable<Float> directionObservable() {
+        return directionObservable;
+    }
+
+    public Observable<Status> gpsStatusObservable() {
+        if (gpsStatusObservable == null) {
+            gpsStatusObservable = GpsStatusProvider.create(this).share();
         }
-        return geoDir;
+        return gpsStatusObservable;
     }
 
-    private ImmutablePair<IGeoData, Float> currentGeoDir() {
-        return geoDirObservable().first().toBlockingObservable().single();
-    }
-
+    @NonNull
     public IGeoData currentGeo() {
-        return currentGeoDir().left;
+        return currentGeo;
     }
 
-    public Float currentDirection() {
-        return currentGeoDir().right;
+    public boolean hasValidLocation() {
+        return hasValidLocation;
+    }
+
+    public Float distanceNonBlocking(final ICoordinates target) {
+        if (target.getCoords() == null) {
+            return null;
+        }
+        return currentGeo.getCoords().distanceTo(target);
+    }
+
+    public float currentDirection() {
+        return currentDirection;
     }
 
     public boolean isLiveMapHintShownInThisSession() {
@@ -85,6 +203,10 @@ public class CgeoApplication extends Application {
      */
     public void forceRelog() {
         forceRelog = true;
+    }
+
+    public boolean isGooglePlayServicesAvailable() {
+        return isGooglePlayServicesAvailable;
     }
 
 }

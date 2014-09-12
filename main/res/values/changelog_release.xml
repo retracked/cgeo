@@ -2,92 +2,69 @@
 <resources>
   <!-- changelog for the release branch -->
   <string name="changelog_release" translatable="false">\n
-     <b>Next bugfix release:</b>\n
-     <b>Bugfixes:</b>\n
-    · OC-login was not possible if no GC-login stored\n
-    · Geocodes are always case insensitive\n
-    · Fixed crashes in dir chooser\n
-    · Log password field missing for OC if changing log type\n
-    · Send2cgeo import screen not shown on second import start\n
-    · Fixed parsing of waypoints from personal note if no valid coords stored\n
-    · Special log types for unpublished caches now recognized correct\n
-    · HTML entities in image titles are properly decoded\n
+    <b>Next bugfix release:</b>\n
+    · Fix: Hardware acceleration is unreliable on some devices\n
+    · Fix: Return correct error message if a cache is unpublished\n
+    · Fix: Better icon for navigation menu in cache details\n
     \n
-     <b>2014.02.04:</b>\n
-    · Reinstate parsing of trackable name and owner after gc.com change\n
-    · Minor stability fix\n
+    <b>2014.09.02:</b>\n
+    · Fix: Hardware acceleration is unreliable on Android &lt; 4.2 and on some devices\n
+    · Fix: Recognize new date formats on geocaching.com\n
+    · Fix: Date for event caches are not available in search results\n
+    · Fix: Favorite points should not be given to event caches\n
+    · Fix: Force English does not work on main screen\n
+    · Fix: Trackables are not included in search on main screen\n
+    · Fix: Trackables images are too small\n
+    · Fix: Default coordinates format for new installations should be degrees and decimal minutes\n
+    · Fix: Several non-frequent causes of crashes\n
     \n
-     <b>2014.01.25</b>\n
-     <b>Bugfixes:</b>\n
-    · Twitter problem fixed\n
-    · Some phones wouldn\'t let c:geo add new pictures to logs\n
+    <b>2014.08.29:</b>\n
+    · Fix: Stored found or owned caches shown on map although set to hidden\n
     \n
-    <b>2014.01.22</b>\n
-     <b>Bugfixes:</b>\n
-    · Select log photo from alternate sources on Android 4.4\n
-    · Upload new photo with correct orientation\n
-    · Choose another page if the latest active page does not exist\n
-    · Various stability bug fixes\n
+    <b>2014.08.28:</b>\n
+    · New: Option to disable hardware acceleration on problematic devices\n
+    · Various bugfixes\n
     \n
-    <b>2014.01.06</b>\n
-    <b>New Features:</b>\n
-    · Browse pocket queries online (press menu on main screen)\n
-    · c:geo widget for direct access to stored lists\n
-    · Support of extremcaching.com, with online searches and live map\n
-    · Search by owner/finder for opencaching websites\n
-    · better support of opencaching.com (Garmin)\n
-    · Popup on map shows date of event caches\n
-    · GPX import from Google Drive, Dropbox, … (requires Android 4.4)\n
-    · Show cache where a Geokrety is currently placed\n
-    · Configurable twitter templates\n
-    · Creating a new WP the type will be preset depending on the cache type\n 
-    · Show event date for OC event caches in search results\n
-    · Sorting caches by favorite point percentage\n
-    · Filtering caches which have a personal note\n
-    · Include TB inventory in GPX export\n
-    · New popularity ratio filter (percentage of favorite points)\n
-    · QR code scanner supports TB URLs\n
-    · Limit initial zoom on live map to avoid huge area loading\n
-    · Preparation for new c:geo contacts plugin\n
-    · Show geokrety image\n
-    · Preparation for Pebble navigation app (authored by another developer)\n
+    <b>2014.08.27a:</b>\n
     \n
-     <b>Bugfixes:</b>\n
-    · Reduce memory usage for OSM mapsforge to avoid crashes\n
-    · Optimize database access for faster live map loading\n
-    · In rare cases GPS was not switched off when leaving the app\n
-    · Cache type filter was not applied for OC nearby search\n
-    · No cache coords if cache is at equator or prime meridian\n
-    · Parts of the compass not shown when using big fonts\n
-    · WP with special characters have not been shown\n
-    · Disallow deletion of all caches incl. list if a filter is in use\n
-    · OC authorization page not shown in light theme\n
-    · DirChooser not showing all dirs on some devices\n
-    · Allow manual path input in dirchooser\n
-    · Network timeout reduced to 30 seconds to avoid long waiting time\n
-    · Show as list also possible when map is not live\n
-    · Respect limit of 500 chars for personal note on gc.com on upload or merge\n
-    · GPX export did not export archived status\n
-    · Hint was not removed from stored caches if removed on website\n
-    · Short description was not removed from stored caches if removed on website\n
-    · Attribute was not removed from stored caches if removed from the website\n
-    · Fixed rare crash when logging an event cache\n
-    · Waypoints have sometimes been doubled when refreshing cache\n
-    · Preview image for logpicture was downscaled to wrong size\n
-    · Optimized login procedure and session management for gc.com\n
-    · Corrected attribute loading for opencaching.pl\n
-    · A lot of changes for more stability and usability\n
-    · Personal note upload now only for PM\n
-    · Find count not updated is user has found 1 cache\n
+    <font size="16"><b>IMPORTANT CHANGE</b></font>\n
+    · New: Actionbar menus (Long press action buttons for a description)\n
+    <a href="http://faq.cgeo.org/#10_83">Please do read our FAQ to learn more about the new menu!</a>\n
     \n
+    · New: Show also own logs on friends log page\n
+    · New: Navigate - WhereYouGo will invoke automatic cartridge download in WhereYouGo\n
+    · New: Filter for caches which are not found\n
+    · New: Show \"Import from web\" also if not yet registered\n
+    · New: Popup list of changes on first start after upgrade\n
+    · New: Android Beam (NFC Sharing)\n
+    · New: Debugging option to save memory dumps on user demand\n
+    · New: Load Greokrety inventory for OC caches\n
+    · New: Autosave caches if user modifies waypoints\n
+    · New: Show recently viewed caches when clicking search icon on main screen\n
+    · New: Add support for opencaching.org.uk\n
+    · New: Improved sorting of waypoints depending on waypoint category\n
+    · New: Have a link to \"related webpage\" in cache details\n
+    · Fix: Hiding own caches on opencaching\n
+    · Fix: Webcam caches not marked as found after posting log\n
+    · Fix: Archived caches now also hidden if hiding disabled caches is active\n
+    · Fix: Filter invalid characters in GPX files\n
+    · Fix: All caches shown as owned if no username stored\n
+    · Fix: GPX import from mail failing on some devices\n
+    · Fix: Updating cache history should not ask for list to save caches\n
+    · Fix: Speed now always shown in km or miles per hour\n
+    · Fix: USER template now shows the correct username for the site where the cache is hosted\n
+    · Fix: Keep filter active if user switches the list\n
+    · Fix: Cache names with special chars not shown\n
+    · Fix: Improve static maps resolution and scaling depending on the screen resolution\n
+    · Fix: Will attend logs not counted in log summary of OC caches\n
+    · Fix: Improved loading of listing images\n
+    · Fix: Empty personal note not uploaded to gc.com\n
     \n
-    <a href="https://github.com/cgeo/cgeo/issues?milestone=21&amp;state=closed">Detailed list of all changes</a>\n
-    \n
-    <b>Old releases</b>\n
-    · Please refer to the release notes on the <a href="http://www.cgeo.org">c:geo-website</a>.\n
-    \n
+    <a href="https://github.com/cgeo/cgeo/issues?q=milestone%3A%22Next+feature+release%22+is%3Aclosed">Detailed list of all changes</a>\n
     \n
     <b>Known Limitations/Bugs:</b>\n
+    · Device menu button not working on map popup\n
+      Please use the three dot button instead\n
     · Live map:\n
       Approximated coords due to limitations on the GC-website\n
       Be aware: If navigation is started directly from live map it may also use the approximated coords!\n
